@@ -1,0 +1,35 @@
+{% extends "basic_app/base.html" %}
+{% block body_block %}
+
+  {% for usertask in usertasks %}
+
+  <form action="{% url 'basic_app:user_tasks_view' %}" method="POST">
+    {% csrf_token %}
+    <label for="name" name = "name" id = "id_name"> {{ usertask.name }} </label> <label id = "hours"> 00</label>:<label id = "minutes">00</label>:<label id = "seconds">00</label><label for="timer" name="timer" id = "id_timer" style = "display: none">{{ usertask.timer }}</label><label for="id" id = "id_id" style = "display: none">{{ usertask.id }}</label>
+      <input type="submit" name="task_button" value="Отправить">
+  </form>
+    <button type="button" id="start_button" onclick="start_time_counting()">Запустить</button><button type="button" name="stop_button" onclick="stop_time_counting()">Остановить</button>
+  {% endfor %}
+  <script type="text/javascript">
+    function pad (val) { return val > 9 ? val : "0" + val; };                     //дописываем 0, если число часов, минут или секунд меньше 10
+    var sec = document.getElementById("id_timer").innerText;                         //берем исходное значение секунд
+    console.log(sec);
+    var myVar = {};                                                                 //объявляем переменнуЮ, которую будем использовать для счетчика
+    document.getElementById("seconds").innerText = pad(sec%60);
+    document.getElementById("minutes").innerText = pad(Math.floor(sec%3600/60));
+    document.getElementById("hours").innerText = pad(Math.floor(sec/3600));
+
+    function start_time_counting() {
+          myVar = setInterval( function(){
+            document.getElementById("seconds").innerText=pad(++sec%60);               //функция плюсует только значение sec, которое брало цифру из базы данных
+            document.getElementById("minutes").innerText=pad(Math.floor(sec%3600/60));
+            document.getElementById("hours").innerText=pad(Math.floor(sec/3600))
+          }, 1000);
+      }
+
+    function stop_time_counting() {                                                     //остановка отсчета времени. Не сброс
+        clearInterval(myVar);
+        document.getElementById("id_timer").innerText = sec;
+      }
+  </script>
+{% endblock %}
