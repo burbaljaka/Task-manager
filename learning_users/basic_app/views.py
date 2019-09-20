@@ -131,18 +131,27 @@ def user_tasks_view(request):
             name = form.cleaned_data['name']
             timer = form.cleaned_data['timer']
             ident = form.cleaned_data['id']
+            to_delete = form.cleaned_data['fordelete']
             if ident != 0:
                 userform = UserTask.objects.get(pk=ident)
-                userform.name = name
-                userform.timer = timer
-                print('222', userform)
-                userform.save()
+                if to_delete == "No":
+                    userform.name = name
+                    userform.timer = timer
+                    print('222', userform)
+                    userform.save()
+                else:
+                    userform = UserTask.objects.get(pk=ident).delete()
             else:
                 userform = UserTask(name = name, user_id = current_user_id)
                 userform.save()
         else:
             print('333', form)
-    return render(request, 'basic_app/tasks.html', {'usertasks': q})
+
+    context = {
+        'usertasks': q,
+        'counter': len(q)
+    }
+    return render(request, 'basic_app/tasks.html', context)
 
 """
 def end_time_counting(user, task_name, result_time):

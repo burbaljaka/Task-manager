@@ -17,6 +17,7 @@ class UserProfileInfoForm(forms.ModelForm):
 
 class UserTaskForm(forms.ModelForm):
     id = forms.IntegerField()
+    fordelete = forms.CharField()
     class Meta():
         model = UserTask
         fields = ('name', 'timer')
