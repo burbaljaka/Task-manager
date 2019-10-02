@@ -1,5 +1,5 @@
 from django.shortcuts import render
-from basic_app.forms import UserForm,UserProfileInfoForm, UserTaskForm
+from basic_app.forms import UserForm,UserProfileInfoForm, UserTaskForm, StartTaskForm, StopTaskForm
 from .models import UserTask, PartTask
 
 # Extra Imports for the Login and Logout Capabilities
@@ -129,10 +129,9 @@ def user_tasks_view(request):
         for task in q:
             if parttask.UserTask_id == task.id:
                 task.timer = (timezone.now() - parttask.time_start).total_seconds()
-    print(q)
-    print('111')
-    if request.method == "POST" and :
-        form = UserTaskForm(request.POST)
+
+    if request.method == "POST" and 'is_counting' == 0:
+        form = StartTaskForm(request.POST)
         if form.is_valid():
             name = form.cleaned_data['name']
             timer = form.cleaned_data['timer']
@@ -148,7 +147,7 @@ def user_tasks_view(request):
                 else:
                     userform = UserTask.objects.get(pk=ident).delete()
             else:
-                userform = UserTask(name = name, user_id = current_user_id)
+                userform = StartTaskForm(name = name, user_id = current_user_id)
                 userform.save()
         else:
             print('333', form)
