@@ -1,6 +1,6 @@
 from django.shortcuts import render
 from basic_app.forms import UserForm,UserProfileInfoForm, UserTaskForm
-from .models import UserTask
+from .models import UserTask, PartTask
 
 # Extra Imports for the Login and Logout Capabilities
 from django.contrib.auth import authenticate, login, logout
@@ -9,6 +9,8 @@ from django.urls import reverse
 from django.contrib.auth.decorators import login_required
 import time
 from threading import Timer
+import datetime
+from django.utils import timezone
 
 def index(request):
     return render(request,'basic_app/index.html')
@@ -122,8 +124,14 @@ def user_login(request):
 def user_tasks_view(request):
     current_user_id = request.user.id
     q = UserTask.objects.filter(user_id=current_user_id)
+    parttasks = PartTask.objects.filter(time_stop='0001-01-01 00:00:00')
+    for parttask in parttasks:
+        for task in q:
+            if parttask.UserTask_id == task.id:
+                task.timer = (timezone.now() - parttask.time_start).total_seconds()
+    print(q)
     print('111')
-    if request.method == "POST":
+    if request.method == "POST" and :
         form = UserTaskForm(request.POST)
         if form.is_valid():
             name = form.cleaned_data['name']

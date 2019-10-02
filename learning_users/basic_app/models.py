@@ -34,10 +34,10 @@ class PartTask(models.Model):
     UserTask = models.ForeignKey(UserTask, on_delete = 'Do_Nothing')
 
     time_start  = models.DateTimeField()
-    time_stop   = models.DateTimeField()
+    time_stop   = models.DateTimeField(default = '0001-01-01 00:00:00')
     comment     = models.CharField(max_length = 200)
     user        = models.ForeignKey(User, on_delete = 'Do_Nothing')
     time_length = models.IntegerField(default = 0)
 
     def __str__(self):
-        return self.user.username
+        return self.UserTask.name
