@@ -23,6 +23,21 @@ class UserTask(models.Model):
     name = models.CharField(max_length = 30, default = 'Задача')
     timer = models.IntegerField(default = 0)
     color = models.CharField(max_length = 30, default = '0, 0, 0, 0')
+    is_counting = models.IntegerField(default = 0)
+    partnumber = models.IntegerField(default = 0)
 
     def __str__(self):
         return self.name
+
+
+class PartTask(models.Model):
+    UserTask = models.ForeignKey(UserTask, on_delete = 'Do_Nothing')
+
+    time_start  = models.DateTimeField()
+    time_stop   = models.DateTimeField()
+    comment     = models.CharField(max_length = 200)
+    user        = models.ForeignKey(User, on_delete = 'Do_Nothing')
+    time_length = models.IntegerField(default = 0)
+
+    def __str__(self):
+        return self.user.username

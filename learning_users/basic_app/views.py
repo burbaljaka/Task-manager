@@ -2,8 +2,6 @@ from django.shortcuts import render
 from basic_app.forms import UserForm,UserProfileInfoForm, UserTaskForm
 from .models import UserTask
 
-
-
 # Extra Imports for the Login and Logout Capabilities
 from django.contrib.auth import authenticate, login, logout
 from django.http import HttpResponseRedirect, HttpResponse
