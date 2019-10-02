@@ -10,8 +10,36 @@ from django.http import HttpResponseRedirect, HttpResponse
 from django.urls import reverse
 from django.contrib.auth.decorators import login_required
 import time
+from threading import Timer
 
-# Create your views here.
+"""
+class RepeatedTimer(SimplePlugin):
+    def __init__(self, bus, interval, function, *args, **kwargs):
+        SimplePlugin.__init__(self, bus)
+        self._timer     = None
+        self.interval   = interval
+        self.function   = function
+        self.args       = args
+        self.kwargs     = kwargs
+        self.is_running = False
+        self.start()
+
+    def _run(self):
+        self.is_running = False
+        self.start()
+        self.function(*self.args, **self.kwargs)
+
+    def start(self):
+        if not self.is_running:
+            self._timer = Timer(self.interval, self._run)
+            self._timer.start()
+            self.is_running = True
+
+    def stop(self):
+        self._timer.cancel()
+        self.is_running = False
+"""
+
 def index(request):
     return render(request,'basic_app/index.html')
 
