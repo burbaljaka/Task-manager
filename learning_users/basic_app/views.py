@@ -130,25 +130,24 @@ def user_tasks_view(request):
             if parttask.UserTask_id == task.id:
                 task.timer = (timezone.now() - parttask.time_start).total_seconds()
 
-    if request.method == "POST" and 'is_counting' == 0:
+    if request.method == "POST" and 'start_button' in request.POST:
         form = StartTaskForm(request.POST)
+        print(form)
         if form.is_valid():
             name = form.cleaned_data['name']
-            timer = form.cleaned_data['timer']
             ident = form.cleaned_data['id']
             to_delete = form.cleaned_data['fordelete']
-            if ident != 0:
-                userform = UserTask.objects.get(pk=ident)
-                if to_delete == "No":
-                    userform.name = name
-                    userform.timer = timer
-                    print('222', userform)
-                    userform.save()
-                else:
-                    userform = UserTask.objects.get(pk=ident).delete()
-            else:
-                userform = StartTaskForm(name = name, user_id = current_user_id)
+            userform = UserTask.objects.get(pk=ident)
+            if to_delete == "No":
+                userform.UserTask_id = name
+                userform.timer = timer
+                print('222', userform)
                 userform.save()
+            else:
+                userform = UserTask.objects.get(pk=ident).delete()
+        else:
+            userform = StartTaskForm(name = name, user_id = current_user_id, time_start = timezone.now())
+            userform.save()
         else:
             print('333', form)
 

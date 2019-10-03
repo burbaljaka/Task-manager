@@ -26,7 +26,7 @@ class StartTaskForm(forms.ModelForm):
     form_type = forms.CharField()
     class Meta():
         model   = PartTask
-        fields  = ('UserTask',)
+        fields  = ('UserTask','user')
 
 class StopTaskForm(forms.ModelForm):
     form_type = forms.CharField()
