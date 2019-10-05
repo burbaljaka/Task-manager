@@ -12,8 +12,8 @@
     <input for="id_id" type="number" name="id" id = "id_id" value="{{ usertask.id }}" style="display:none">
     <input for="id_is_counting" name="is_counting-{{ forloop.counter }}" id ="id_is_counting" value="{{ usertask.is_counting }}" style="display:none">
     <input type="text" name="partnumber -{{ forloop.counter }}" id ="id_partnumber" value="{{ usertask.partnumber }}" style="display:none">
-    <button type="submit" name="start_button-{{ forloop.counter }}" id="start_button" style="display:block">&#9658</button>
-    <button type="submit" name="stop_button-{{ forloop.counter }}" id="stop_button" style="display:none">■</button>
+    <button type="submit" name="start_button-{{  forloop.counter  }}" id="start_button" onclick="start_time_counting(this.name)" style="display:block">&#9658</button>
+    <button type="submit" name="stop_button-{{  forloop.counter  }}" id="start_button" onclick="start_time_counting(this.name)" style="display:block"> ■</button>
     <button type="button" name="delete_button-{{ forloop.counter }}" id="delete_button" onclick="delete_task(this.name)">&#215</button>
     <input type="text" name="fordelete" id="id_fordelete" value="No" style="display:none"</input>
   </form>
@@ -56,7 +56,7 @@
     function start_time_counting(number) {
           item_number = number;                             //определяем номер в имени нажатой кнопки
           document.getElementsByName("start_button-"+item_number.toString())[0].style.display = "none";
-          document.getElementsByName("stop_button-"+item_number.toString())[0].style.display = "block";
+          document.getElementsByName("start_button-"+item_number.toString())[0].style.display = "block";
           var sec = document.getElementsByName("timer-"+item_number.toString())[0].value;   //берем исходное значение секунд задачи
           var time_counter = {};
           time_counter = setInterval(function(){

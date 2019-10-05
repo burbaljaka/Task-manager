@@ -136,18 +136,25 @@ def user_tasks_view(request):
         if form.is_valid():
             name = form.cleaned_data['name']
             ident = form.cleaned_data['id']
-            to_delete = form.cleaned_data['fordelete']
-            userform = UserTask.objects.get(pk=ident)
-            if to_delete == "No":
-                userform.UserTask_id = name
-                userform.timer = timer
-                print('222', userform)
-                userform.save()
-            else:
-                userform = UserTask.objects.get(pk=ident).delete()
+            time_start = timezone.now()
+            parttask = PartTask(name=name, user_id = current_user_id, 
+            	time_start = time_start)
         else:
-            userform = StartTaskForm(name = name, user_id = current_user_id, time_start = timezone.now())
-            userform.save()
+        	print(form)
+    elif request.method == "POST" and 'stop_button' in request.POST:
+    	form = StopTaskForm(request.POST)
+    	if form.is_valid:
+    		
+                if to_delete == "No":
+                    userform.name = name
+                    userform.timer = timer
+                    print('222', userform)
+                    userform.save()
+                else:
+                    userform = UserTask.objects.get(pk=ident).delete()
+            else:
+                userform = StartTaskForm(name = name, user_id = current_user_id)
+                userform.save()
         else:
             print('333', form)
 
