@@ -125,26 +125,60 @@ def user_tasks_view(request):
     current_user_id = request.user.id
     q = UserTask.objects.filter(user_id=current_user_id)
     parttasks = PartTask.objects.filter(time_stop='0001-01-01 00:00:00')
-    for parttask in parttasks:
-        for task in q:
-            if parttask.UserTask_id == task.id:
-                task.timer = (timezone.now() - parttask.time_start).total_seconds()
+    if len(parttasks) > 0:
+        for parttask in parttasks:
+            for task in q:
+                if parttask.id_id == task.id:
+                    task.timer = round((timezone.now() - parttask.time_start).total_seconds())
+                    print(task.timer)
 
     if request.method == "POST" and 'start_button' in request.POST:
+        print('start_button')
         form = StartTaskForm(request.POST)
         print(form)
         if form.is_valid():
             name = form.cleaned_data['name']
             ident = form.cleaned_data['id']
             time_start = timezone.now()
-            parttask = PartTask(name=name, user_id = current_user_id, 
+            parttask = PartTask(id_id=ident, user_id = current_user_id,
             	time_start = time_start)
+            parttask.save()
+            usertask = UserTask.objects.get(pk=ident)
+            usertask.partnumber = parttask.id
+            print(parttask.id)
+            usertask.is_counting = 1
+            usertask.save()
         else:
         	print(form)
+
     elif request.method == "POST" and 'stop_button' in request.POST:
-    	form = StopTaskForm(request.POST)
-    	if form.is_valid:
-    		
+        print('stop_button')
+        form = StopTaskForm(request.POST)
+        print(form)
+        if form.is_valid():
+            partnumber = form.cleaned_data['partnumber']
+            parttask = PartTask.objects.get(pk = partnumber)
+            parttask.time_stop = timezone.now()
+            parttask.time_length = (parttask.time_stop - parttask.time_start).total_seconds()
+            parttask.save()
+
+            usertask = UserTask.objects.get(pk=id_id)
+            usertask.timer += parttask.time_length
+            usertask.is_counting = 0
+            usertask.save()
+        else:
+            print(form)
+
+    elif request.method == "POST" and 'task_button' in request.POST:
+        print('task_buttons')
+        form = UserTaskForm(request.POST)
+        if form.is_valid():
+            name = form.cleaned_data['name']
+            timer = form.cleaned_data['timer']
+            ident = form.cleaned_data['id']
+            to_delete = form.cleaned_data['fordelete']
+            if ident != 0:
+                userform = UserTask.objects.get(pk=ident)
                 if to_delete == "No":
                     userform.name = name
                     userform.timer = timer
@@ -153,10 +187,13 @@ def user_tasks_view(request):
                 else:
                     userform = UserTask.objects.get(pk=ident).delete()
             else:
-                userform = StartTaskForm(name = name, user_id = current_user_id)
+                userform = UserTask(name = name, user_id = current_user_id)
                 userform.save()
         else:
             print('333', form)
+
+    else:
+        print(request.POST  )
 
     context = {
         'usertasks': q,

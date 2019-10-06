@@ -23,14 +23,15 @@ class UserTaskForm(forms.ModelForm):
         fields = ('name', 'timer')
 
 class StartTaskForm(forms.ModelForm):
-    form_type = forms.CharField()
+    name = forms.CharField()
+    id = forms.IntegerField()
     class Meta():
-        model   = PartTask
-        fields  = ('UserTask','user')
+        model = UserTask
+        fields = ('name', 'timer')
+
 
 class StopTaskForm(forms.ModelForm):
-    form_type = forms.CharField()
     partnumber = forms.IntegerField()
     class Meta():
-        model   = PartTask
-        fields  = ('UserTask', 'comment')
+        model = UserTask
+        fields = ('timer', )

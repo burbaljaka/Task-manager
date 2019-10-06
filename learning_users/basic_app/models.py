@@ -31,7 +31,7 @@ class UserTask(models.Model):
 
 
 class PartTask(models.Model):
-    UserTask = models.ForeignKey(UserTask, on_delete = 'Do_Nothing')
+    id = models.ForeignKey(UserTask, on_delete = 'Do_Nothing', primary_key = True)
 
     time_start  = models.DateTimeField()
     time_stop   = models.DateTimeField(default = '0001-01-01 00:00:00')
