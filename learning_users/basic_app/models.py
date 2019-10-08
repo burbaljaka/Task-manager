@@ -40,4 +40,4 @@ class PartTask(models.Model):
     time_length = models.IntegerField(default = 0)
 
     def __str__(self):
-        return self.UserTask.name
+        return self.time_start

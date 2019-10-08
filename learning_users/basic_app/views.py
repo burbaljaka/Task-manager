@@ -144,8 +144,7 @@ def user_tasks_view(request):
             	time_start = time_start)
             parttask.save()
             usertask = UserTask.objects.get(pk=ident)
-            usertask.partnumber = parttask.id
-            print(parttask.id)
+            usertask.partnumber = parttask.pk
             usertask.is_counting = 1
             usertask.save()
         else:
@@ -162,7 +161,7 @@ def user_tasks_view(request):
             parttask.time_length = (parttask.time_stop - parttask.time_start).total_seconds()
             parttask.save()
 
-            usertask = UserTask.objects.get(pk=id_id)
+            usertask = UserTask.objects.get(pk = parttask.id_id)
             usertask.timer += parttask.time_length
             usertask.is_counting = 0
             usertask.save()
