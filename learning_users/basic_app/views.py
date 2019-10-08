@@ -128,7 +128,7 @@ def user_tasks_view(request):
     if len(parttasks) > 0:
         for parttask in parttasks:
             for task in q:
-                if parttask.id_id == task.id:
+                if parttask.usertask_id == task.id:
                     task.timer = round((timezone.now() - parttask.time_start).total_seconds())
                     print(task.timer)
 
@@ -140,7 +140,7 @@ def user_tasks_view(request):
             name = form.cleaned_data['name']
             ident = form.cleaned_data['id']
             time_start = timezone.now()
-            parttask = PartTask(id_id=ident, user_id = current_user_id,
+            parttask = PartTask(usertask_id=ident, user_id = current_user_id,
             	time_start = time_start)
             parttask.save()
             usertask = UserTask.objects.get(pk=ident)
@@ -161,7 +161,7 @@ def user_tasks_view(request):
             parttask.time_length = (parttask.time_stop - parttask.time_start).total_seconds()
             parttask.save()
 
-            usertask = UserTask.objects.get(pk = parttask.id_id)
+            usertask = UserTask.objects.get(pk = parttask.usertask_id)
             usertask.timer += parttask.time_length
             usertask.is_counting = 0
             usertask.save()

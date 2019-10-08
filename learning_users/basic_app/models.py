@@ -31,8 +31,7 @@ class UserTask(models.Model):
 
 
 class PartTask(models.Model):
-    id = models.ForeignKey(UserTask, on_delete = 'Do_Nothing', primary_key = True)
-
+    usertask_id = models.IntegerField(default = 0)
     time_start  = models.DateTimeField()
     time_stop   = models.DateTimeField(default = '0001-01-01 00:00:00')
     comment     = models.CharField(max_length = 200)
