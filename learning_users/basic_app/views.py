@@ -140,9 +140,22 @@ def user_tasks_view(request):
             name = form.cleaned_data['name']
             ident = form.cleaned_data['id']
             time_start = timezone.now()
-            parttask = PartTask(usertask_id=ident, user_id = current_user_id,
-            	time_start = time_start)
+            parttask = PartTask(usertask_id=ident, user_id = current_user_id, time_start = time_start)
             parttask.save()
+            try:
+                running_task = UserTask.objects.get(user_id = current_user_id, is_counting = 1)
+            except:
+                print('no counting tasks')
+            else:
+                print('111')
+                running_task.is_counting = 0
+                counting_task = PartTask.objects.get(pk=running_task.partnumber)
+                counting_task.time_stop = timezone.now()
+                counting_task.time_length = (counting_task.time_stop - counting_task.time_start).total_seconds()
+                running_task.timer +=counting_task.time_length
+                running_task.save()
+                counting_task.save()
+
             usertask = UserTask.objects.get(pk=ident)
             usertask.partnumber = parttask.pk
             usertask.is_counting = 1
