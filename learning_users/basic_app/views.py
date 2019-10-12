@@ -223,7 +223,14 @@ def reports(request):
 
     if request.GET['period'] == 'this_day':
         parttasks = PartTask.objects.filter(user_id = current_user_id, date_start=datetime.date.today())
-        usertasks = UserTask.objects.filter(user_id = current_user_id)
+    elif request.GET['period'] == 'last_day':
+    	parttasks = PartTask.objects.filter(user_id = current_user_id, date_start=datetime.date.today().timedelta(days=1))
+    elif request.GET['period'] == '15_days':
+    	parttasks = PartTask.objects.filter(user_id = current_user_id, date_start__range (datetime.date.today().timedelta(days=15), datetime.date.today())
+    elif request.GET['period'] == 'this_month':
+    	parttasks = PartTask.objects.filter(user_id = current_user_id, date_start=datetime.date.today())#continue here
+    
+    usertasks = UserTask.objects.filter(user_id = current_user_id)
         for usertask in usertasks:
             usertask.timer = 0
             for parttask in parttasks:
