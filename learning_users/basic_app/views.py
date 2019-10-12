@@ -143,8 +143,22 @@ def user_tasks_view(request):
             time_start = datetime.datetime.now().time()
             datetime_start = timezone.now()
             parttask = PartTask(usertask_id=ident, user_id = current_user_id,
-            	time_start = time_start, date_start = date_start, datetime_start = datetime_start)
+        	time_start = time_start, date_start = date_start, datetime_start = datetime_start)
             parttask.save()
+
+            running_task = UserTask.objects.filter(user_id = current_user_id, is_counting = 1)
+            if len(running_task) > 0:
+                running_parttask = PartTask.objects.get(pk = running_task.partnumber)
+                running_parttask.date_stop = datetime.date.today()
+                running_parttask.time_stop = datetime.datetime.now().time()
+                running_parttask.datetime_stop = timezone.now()
+                running_parttask.time_length = (parttask.datetime_stop - parttask.datetime_start).total_seconds()
+                running_parttask.save()
+
+                running_task.timer += running_parttask.time_length
+                running_task.is_counting = 0
+                running_task.save()
+
             usertask = UserTask.objects.get(pk=ident)
             usertask.partnumber = parttask.pk
             usertask.is_counting = 1
