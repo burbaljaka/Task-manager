@@ -9,6 +9,7 @@ app_name = 'basic_app'
 urlpatterns=[
     url(r'^register/$',views.register,name='register'),
     url(r'^user_login/$',views.user_login,name='user_login'),
-    path('tasks/', views.user_tasks_view, name = 'user_tasks_view')
+    path('tasks/', views.user_tasks_view, name = 'user_tasks_view'),
+    path('reports/', views.reports, name = 'reports')
 
 ]

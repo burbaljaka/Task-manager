@@ -1,7 +1,7 @@
 from django.shortcuts import render
 from basic_app.forms import UserForm,UserProfileInfoForm, UserTaskForm, StartTaskForm, StopTaskForm
 from .models import UserTask, PartTask
-
+from django.utils.timezone import localtime, now
 # Extra Imports for the Login and Logout Capabilities
 from django.contrib.auth import authenticate, login, logout
 from django.http import HttpResponseRedirect, HttpResponse
@@ -124,12 +124,12 @@ def user_login(request):
 def user_tasks_view(request):
     current_user_id = request.user.id
     q = UserTask.objects.filter(user_id=current_user_id)
-    parttasks = PartTask.objects.filter(time_stop='0001-01-01 00:00:00')
+    parttasks = PartTask.objects.filter(datetime_stop='0001-01-01 00:00:00')
     if len(parttasks) > 0:
         for parttask in parttasks:
             for task in q:
                 if parttask.usertask_id == task.id:
-                    task.timer = round((timezone.now() - parttask.time_start).total_seconds())
+                    task.timer = round((datetime.datetime.now() - parttask.datetime_start).total_seconds())
                     print(task.timer)
 
     if request.method == "POST" and 'start_button' in request.POST:
@@ -139,9 +139,11 @@ def user_tasks_view(request):
         if form.is_valid():
             name = form.cleaned_data['name']
             ident = form.cleaned_data['id']
-            time_start = timezone.now()
+            date_start = datetime.date.today()
+            time_start = datetime.datetime.now().time()
+            datetime_start = timezone.now()
             parttask = PartTask(usertask_id=ident, user_id = current_user_id,
-            	time_start = time_start)
+            	time_start = time_start, date_start = date_start, datetime_start = datetime_start)
             parttask.save()
             usertask = UserTask.objects.get(pk=ident)
             usertask.partnumber = parttask.pk
@@ -157,8 +159,10 @@ def user_tasks_view(request):
         if form.is_valid():
             partnumber = form.cleaned_data['partnumber']
             parttask = PartTask.objects.get(pk = partnumber)
-            parttask.time_stop = timezone.now()
-            parttask.time_length = (parttask.time_stop - parttask.time_start).total_seconds()
+            parttask.date_stop = datetime.date.today()
+            parttask.time_stop = datetime.datetime.now().time()
+            parttask.datetime_stop = timezone.now()
+            parttask.time_length = (parttask.datetime_stop - parttask.datetime_start).total_seconds()
             parttask.save()
 
             usertask = UserTask.objects.get(pk = parttask.usertask_id)
@@ -199,6 +203,25 @@ def user_tasks_view(request):
         'counter': len(q)
     }
     return render(request, 'basic_app/tasks.html', context)
+
+def reports(request):
+    current_user_id = request.user.id
+
+    if request.GET['period'] == 'this_day':
+        parttasks = PartTask.objects.filter(user_id = current_user_id, date_start=datetime.date.today())
+        usertasks = UserTask.objects.filter(user_id = current_user_id)
+        for usertask in usertasks:
+            usertask.timer = 0
+            for parttask in parttasks:
+                if parttask.usertask_id == usertask.id:
+                    usertask.timer += parttask.time_length
+
+        context = {
+        'usertasks': usertasks
+        }
+
+    return render(request, 'basic_app/report_page.html', context)
+
 
 """
 def end_time_counting(user, task_name, result_time):

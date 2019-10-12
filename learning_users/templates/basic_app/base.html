@@ -5,6 +5,8 @@
     <title>Tasks</title>
     <!-- Latest compiled and minified CSS -->
     <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/css/bootstrap.min.css" integrity="sha384-BVYiiSIFeK1dGmJRAkycuHAHRg32OmUcww7on3RYdg4Va+PmSTsz/K68vbdEjh4u" crossorigin="anonymous">
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.4.1/jquery.min.js"></script>
+    <script src="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/js/bootstrap.min.js" integrity="sha384-Tc5IQib027qvyjSMfHjOMaLkfuWVxZxUPnCJA7l2mCWNIpG9mGCD8wGNIcPD7Txa" crossorigin="anonymous"></script>
 
   </head>
   <body>
@@ -21,6 +23,19 @@
           {% if user.is_authenticated %}
             <li><a href="{% url 'logout' %}">Logout</a></li>
             <li><a class="navbar-link" href="{% url 'basic_app:user_tasks_view' %}">Your tasks, {{ user.username }}</a></li>
+            <li class="dropdown">
+              <a href="#" class="dropdown-toggle" data-toggle="dropdown" role="button" aria-haspopup="true" aria-expanded="false">Reports <span class="caret"></span></a>
+              <ul class="dropdown-menu">
+                <li><a href="{% url 'basic_app:reports' %}?period=this_day">This day</a></li>
+                <li><a href="{% url 'basic_app:reports' %}?period=last_day">Previous day</a></li>
+                <li><a href="{% url 'basic_app:reports' %}?period=15_days">15 last days</a></li>
+                <li role="separator" class="divider"></li>
+                <li><a href="{% url 'basic_app:reports' %}?period=this_month">Current month</a></li>
+                <li role="separator" class="divider"></li>
+                <li><a href="{% url 'basic_app:reports' %}?period=last_month">Last month</a></li>
+              </ul>
+            </li>
+
           {% else %}
             <li><a class="navbar-link" href="{% url 'basic_app:user_login' %}">Login</a></li>
             <li><a class="navbar-link" href="{% url 'basic_app:register' %}">Register</a></li>

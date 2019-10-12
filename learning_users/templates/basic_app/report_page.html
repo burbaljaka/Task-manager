@@ -1,0 +1,7 @@
+{% extends "basic_app/base.html" %}
+{% block body_block %}
+
+{% for usertask in usertasks %}
+  <h4>{{ usertask.name }}</h4> <span>{{ usertask.timer }}</span>
+{% endfor %}
+{% endblock %}

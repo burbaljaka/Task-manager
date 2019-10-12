@@ -35,3 +35,6 @@ class StopTaskForm(forms.ModelForm):
     class Meta():
         model = UserTask
         fields = ('timer', )
+
+# class ReportForm(forms.ModelForm):
+#     period = forms.CharField()

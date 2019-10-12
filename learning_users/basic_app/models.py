@@ -31,12 +31,16 @@ class UserTask(models.Model):
 
 
 class PartTask(models.Model):
-    usertask_id = models.IntegerField(default = 0)
-    time_start  = models.DateTimeField()
-    time_stop   = models.DateTimeField(default = '0001-01-01 00:00:00')
-    comment     = models.CharField(max_length = 200)
-    user        = models.ForeignKey(User, on_delete = 'Do_Nothing')
-    time_length = models.IntegerField(default = 0)
+    usertask_id     = models.IntegerField(default = 0)
+    date_start      = models.DateField()
+    time_start      = models.TimeField()
+    datetime_start  = models.DateTimeField(default = '0001-01-01 00:00:00')
+    date_stop       = models.DateField(default = '0001-01-01')
+    time_stop       = models.TimeField(default = '00:00:00')
+    datetime_stop   = models.DateTimeField(default = '0001-01-01 00:00:00')
+    comment         = models.CharField(max_length = 200)
+    user            = models.ForeignKey(User, on_delete = 'Do_Nothing')
+    time_length     = models.IntegerField(default = 0)
 
     def __str__(self):
         return self.time_start
