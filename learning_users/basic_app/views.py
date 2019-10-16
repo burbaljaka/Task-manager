@@ -226,26 +226,42 @@ def reports(request):
     elif request.GET['period'] == 'last_day':
     	parttasks = PartTask.objects.filter(user_id = current_user_id, date_start=datetime.date.today().timedelta(days=-1))
     elif request.GET['period'] == '15_days':
-    	parttasks = PartTask.objects.filter(user_id = current_user_id, date_start__range (datetime.date.today().timedelta(days=-15), datetime.date.today())
+    	parttasks = PartTask.objects.filter(user_id = current_user_id,
+    		date_start__range = (datetime.date.today().timedelta(days=-15), datetime.date.today()))
     elif request.GET['period'] == 'this_month':
-    	parttasks = PartTask.objects.filter(user_id = current_user_id, date_start__range = (datetime.date.today().timedelta(days=-(datetime.date.today().day - 1)), datetime.date.today())
+    	parttasks = PartTask.objects.filter(user_id = current_user_id, date_start__range = (datetime.date.today().timedelta(days=-(datetime.date.today().day - 1)), datetime.date.today()))
     
     usertasks = UserTask.objects.filter(user_id = current_user_id)
-        for usertask in usertasks:
-            usertask.timer = 0
-            for parttask in parttasks:
-                if parttask.usertask_id == usertask.id:
-                    usertask.timer += parttask.time_length
+    for usertask in usertasks:
+    	usertask.timer = 0
+    	for parttask in parttasks:
+    		if parttask.usertask_id == usertask.id:
+    			usertask.timer += parttask.time_length
 
-        context = {
-        'usertasks': usertasks
+    context = {
+    	'usertasks': usertasks
         }
 
     return render(request, 'basic_app/report_page.html', context)
 
-
+def base(request):
+	link_to_site = 'https://community-open-weather-map.p.rapidapi.com/weather'
+	headers={
+            'X-RapidAPI-Host': 'community-open-weather-map.p.rapidapi.com',
+            'X-RapidAPI-Key': '5aabc22e25msh45d6df4abdd28d0p1a4479jsn10ea7369318e'
+                }
+	parameters = {
+                'q':'Ryazan,ru',
+                'units':'metric',
+                }
+	weather = requests.get(link_to_site, headers=headers, params=parameters)
+	current_weather = weather.json()
+	context={
+		'city_weather': current_weather['main']['temp']
+	}
+	return render(request, 'basic_app/base.html', context)
 """
-def end_time_counting(user, task_name, result_time):
+def end_time_counting(user, task_name, result_time):7
     res = result_time.split(':')
     result_timer = res[0]*3600+res[1]*60+res[2]
     user=User.objects.get(username=user)
