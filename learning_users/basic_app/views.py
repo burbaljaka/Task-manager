@@ -11,6 +11,8 @@ import time
 from threading import Timer
 import datetime
 from django.utils import timezone
+import dateutil.relativedelta as monthdelta
+from calendar import monthrange
 
 def index(request):
     return render(request,'basic_app/index.html')
@@ -224,13 +226,17 @@ def reports(request):
     if request.GET['period'] == 'this_day':
         parttasks = PartTask.objects.filter(user_id = current_user_id, date_start=datetime.date.today())
     elif request.GET['period'] == 'last_day':
-    	parttasks = PartTask.objects.filter(user_id = current_user_id, date_start=datetime.date.today().timedelta(days=-1))
+    	parttasks = PartTask.objects.filter(user_id = current_user_id, date_start=datetime.date.today() - datetime.timedelta(days=1))
     elif request.GET['period'] == '15_days':
     	parttasks = PartTask.objects.filter(user_id = current_user_id,
-    		date_start__range = (datetime.date.today().timedelta(days=-15), datetime.date.today()))
+    		date_start__range = (datetime.date.today() - datetime.timedelta(days=15), datetime.date.today()))
     elif request.GET['period'] == 'this_month':
-    	parttasks = PartTask.objects.filter(user_id = current_user_id, date_start__range = (datetime.date.today().timedelta(days=-(datetime.date.today().day - 1)), datetime.date.today()))
-    
+    	parttasks = PartTask.objects.filter(user_id = current_user_id, date_start__range = (datetime.date.today() - datetime.timedelta(days = (datetime.date.today().day - 1)), datetime.date.today()))
+    elif request.GET['period'] == 'last_month':
+        date_minus_month = datetime.date.today() - monthdelta(months =+ 1)
+        month_length = monthrange (date_minus_month.year, date_minus_month.month)[1]
+        parttask = PartTask.objects.filter(user_id = current_user_id, date_start__range = (date_minus_month.replace(days = 1), date_minus_month.replace(days = month_length)))
+
     usertasks = UserTask.objects.filter(user_id = current_user_id)
     for usertask in usertasks:
     	usertask.timer = 0
