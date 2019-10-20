@@ -1,7 +1,27 @@
 {% extends "basic_app/base.html" %}
 {% block body_block %}
 
-{% for usertask in usertasks %}
-  <h4>{{ usertask.name }}</h4> <span>{{ usertask.timer }}</span>
-{% endfor %}
+<div class="panel panel-default">
+  <div class="panel-heading">Reports</div>
+  <div class="panel-body">
+    <p>{{ period }}</p>
+  </div>
+
+
+  <table class="table">
+    <thead>
+      <td>Task name</td><td>Spent time</td>
+    </thead>
+  {% for usertask in usertasks %}
+    <tr>
+      <td>{{ usertask.name }}</td><td>{{ usertask.timer }}</td>
+    </tr>
+    <!-- <h4>{{ usertask.name }}</h4> <span>{{ usertask.timer }}</span> -->
+  {% endfor %}
+
+  </table>
+</div>
+
+
+
 {% endblock %}
