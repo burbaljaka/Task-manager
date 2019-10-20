@@ -252,7 +252,8 @@ def reports(request):
 
     context = {
     	'usertasks': usertasks,
-        'period': period
+        'period': period,
+        'counter': len(usertasks)
         }
 
     return render(request, 'basic_app/report_page.html', context)
