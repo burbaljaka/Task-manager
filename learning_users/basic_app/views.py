@@ -207,6 +207,7 @@ def user_tasks_view(request):
     else:
         print(request.POST)
 
+    q = UserTask.objects.filter(user_id=current_user_id)
     context = {
         'usertasks': q,
         'counter': len(q)
@@ -232,7 +233,7 @@ def reports(request):
         parttasks = PartTask.objects.filter(user_id = current_user_id,
             date_start__range = (datetime.date.today() - datetime.timedelta(days = (datetime.date.today().day - 1)), datetime.date.today()))
         period = 'This month'
-        
+
     elif request.GET['period'] == 'last_month':
         date_minus_month = datetime.date.today() - monthdelta.relativedelta(months =+ 1)
         month_length = monthrange (date_minus_month.year, date_minus_month.month)[1]

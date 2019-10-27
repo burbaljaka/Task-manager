@@ -40,11 +40,12 @@
     loop_counter = parseInt(document.getElementById("counter").innerText, 10);  //берем число задач для пользователя из числа повтора цикла
     if (loop_counter != 0) {
       for ( let i = 1; i<(loop_counter+1); i++) {
+        var counting = document.getElementsByName("is_counting-"+i.toString())[0].value;
         var sec = document.getElementsByName("timer-"+i.toString())[0].value;   //берем исходное значение секунд задачи
         document.getElementById("seconds-"+i.toString()).innerText = pad(Math.floor(sec%60)); //заполняем для секунд
         document.getElementById("minutes-"+i.toString()).innerText = pad(Math.floor(sec%3600/60));    //минут
         document.getElementById("hours-"+i.toString()).innerText = pad(Math.floor(sec/3600)); //часов
-        counting = document.getElementsByName("is_counting-"+i.toString())[0].value;
+
 
         if (counting === "1"){
           document.getElementsByName('form-'+i.toString())[0][7].style.display = "none";
@@ -58,7 +59,7 @@
     function start_time_counting(number) {
           item_number = number;                             //определяем номер в имени нажатой кнопки
 
-          var sec = document.getElementsByName("timer-"+item_number.toString())[0].value;   //берем исходное значение секунд задачи
+          var sec = 0;   //берем исходное значение секунд задачи
           var time_counter = {};
           time_counter = setInterval(function(){
             document.getElementById("seconds-"+item_number.toString()).innerText=pad(Math.floor(++sec%60));               //функция плюсует только значение sec, которое брало цифру из базы данных
