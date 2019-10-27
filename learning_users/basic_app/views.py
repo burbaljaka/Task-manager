@@ -11,7 +11,7 @@ import time
 from threading import Timer
 import datetime
 from django.utils import timezone
-import dateutil.relativedelta as monthdelta
+from dateutil import relativedelta as monthdelta
 from calendar import monthrange
 
 def index(request):
@@ -132,12 +132,9 @@ def user_tasks_view(request):
             for task in q:
                 if parttask.usertask_id == task.id:
                     task.timer = round((datetime.datetime.now() - parttask.datetime_start).total_seconds())
-                    print(task.timer)
 
     if request.method == "POST" and 'start_button' in request.POST:
-        print('start_button')
         form = StartTaskForm(request.POST)
-        print(form)
         if form.is_valid():
             name = form.cleaned_data['name']
             ident = form.cleaned_data['id']
@@ -169,9 +166,7 @@ def user_tasks_view(request):
         	print(form)
 
     elif request.method == "POST" and 'stop_button' in request.POST:
-        print('stop_button')
         form = StopTaskForm(request.POST)
-        print(form)
         if form.is_valid():
             partnumber = form.cleaned_data['partnumber']
             parttask = PartTask.objects.get(pk = partnumber)
@@ -188,8 +183,7 @@ def user_tasks_view(request):
         else:
             print(form)
 
-    elif request.method == "POST" and 'task_button' in request.POST:
-        print('task_buttons')
+    elif request.method == "POST":
         form = UserTaskForm(request.POST)
         if form.is_valid():
             name = form.cleaned_data['name']
@@ -201,7 +195,6 @@ def user_tasks_view(request):
                 if to_delete == "No":
                     userform.name = name
                     userform.timer = timer
-                    print('222', userform)
                     userform.save()
                 else:
                     userform = UserTask.objects.get(pk=ident).delete()
@@ -212,7 +205,7 @@ def user_tasks_view(request):
             print('333', form)
 
     else:
-        print(request.POST  )
+        print(request.POST)
 
     context = {
         'usertasks': q,
@@ -226,16 +219,20 @@ def reports(request):
     if request.GET['period'] == 'this_day':
         parttasks = PartTask.objects.filter(user_id = current_user_id, date_start=datetime.date.today())
         period = 'This day'
+
     elif request.GET['period'] == 'last_day':
         parttasks = PartTask.objects.filter(user_id = current_user_id, date_start=datetime.date.today() - datetime.timedelta(days=1))
         period = 'Last day'
+
     elif request.GET['period'] == '15_days':
         parttasks = PartTask.objects.filter(user_id = current_user_id, date_start__range = (datetime.date.today() - datetime.timedelta(days=15), datetime.date.today()))
         period = 'Last 15 days'
+
     elif request.GET['period'] == 'this_month':
         parttasks = PartTask.objects.filter(user_id = current_user_id,
             date_start__range = (datetime.date.today() - datetime.timedelta(days = (datetime.date.today().day - 1)), datetime.date.today()))
         period = 'This month'
+        
     elif request.GET['period'] == 'last_month':
         date_minus_month = datetime.date.today() - monthdelta.relativedelta(months =+ 1)
         month_length = monthrange (date_minus_month.year, date_minus_month.month)[1]

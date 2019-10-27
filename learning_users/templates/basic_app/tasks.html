@@ -47,6 +47,8 @@
         counting = document.getElementsByName("is_counting-"+i.toString())[0].value;
 
         if (counting === "1"){
+          document.getElementsByName('form-'+i.toString())[0][7].style.display = "none";
+          document.getElementsByName('form-'+i.toString())[0][8].style.display = "block";
           start_time_counting(i);
         }
       }
@@ -55,8 +57,7 @@
 
     function start_time_counting(number) {
           item_number = number;                             //определяем номер в имени нажатой кнопки
-          document.getElementsByName('form-'+item_number.toString())[0][7].style.display = "none";
-          document.getElementsByName('form-'+item_number.toString())[0][8].style.display = "block";
+
           var sec = document.getElementsByName("timer-"+item_number.toString())[0].value;   //берем исходное значение секунд задачи
           var time_counter = {};
           time_counter = setInterval(function(){
@@ -94,7 +95,7 @@
 
     function delete_task(clicked_name) {
       item_number = clicked_name.split('-')[1];
-      document.getElementsByName("form-"+item_number.toString())[0][9].value="Yes";
+      document.getElementsByName("form-"+item_number.toString())[0][10].value="Yes";
       document.getElementsByName("form-"+item_number.toString())[0].submit();
     }
 
