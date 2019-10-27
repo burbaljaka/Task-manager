@@ -59,7 +59,7 @@
     function start_time_counting(number) {
           item_number = number;                             //определяем номер в имени нажатой кнопки
 
-          var sec = 0;   //берем исходное значение секунд задачи
+          var sec = 0;   //берем нулевое значение секунд задачи
           var time_counter = {};
           time_counter = setInterval(function(){
             document.getElementById("seconds-"+item_number.toString()).innerText=pad(Math.floor(++sec%60));               //функция плюсует только значение sec, которое брало цифру из базы данных
