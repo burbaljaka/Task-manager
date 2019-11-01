@@ -290,12 +290,3 @@ def base(request):
 		'city_weather': current_weather['main']['temp']
 	}
 	return render(request, 'basic_app/base.html', context)
-"""
-def end_time_counting(user, task_name, result_time):7
-    res = result_time.split(':')
-    result_timer = res[0]*3600+res[1]*60+res[2]
-    user=User.objects.get(username=user)
-    q = UserTask.objects.get(user_id=user.id, name = task_name)
-    q.timer = result_timer
-    q.save()
-"""
