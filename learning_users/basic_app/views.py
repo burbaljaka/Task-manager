@@ -1,5 +1,5 @@
 from django.shortcuts import render
-from basic_app.forms import UserForm,UserProfileInfoForm, UserTaskForm, StartTaskForm, StopTaskForm
+from basic_app.forms import UserForm,UserProfileInfoForm, UserTaskForm, StartTaskForm, StopTaskForm, ReturnTaskForm
 from .models import UserTask, PartTask
 from django.utils.timezone import localtime, now
 # Extra Imports for the Login and Logout Capabilities
@@ -125,7 +125,7 @@ def user_login(request):
 
 def user_tasks_view(request):
     current_user_id = request.user.id
-    q = UserTask.objects.filter(user_id=current_user_id)
+    q = UserTask.objects.filter(user_id=current_user_id, to_show = 1)
     parttasks = PartTask.objects.filter(datetime_stop='0001-01-01 00:00:00')
     if len(parttasks) > 0:
         for parttask in parttasks:
@@ -197,7 +197,9 @@ def user_tasks_view(request):
                     userform.timer = timer
                     userform.save()
                 else:
-                    userform = UserTask.objects.get(pk=ident).delete()
+                    userform = UserTask.objects.get(pk=ident)
+                    userform.to_show = 0
+                    userform.save()
             else:
                 userform = UserTask(name = name, user_id = current_user_id)
                 userform.save()
@@ -207,7 +209,7 @@ def user_tasks_view(request):
     else:
         print(request.POST)
 
-    q = UserTask.objects.filter(user_id=current_user_id)
+    q = UserTask.objects.filter(user_id=current_user_id, to_show = 1)
     context = {
         'usertasks': q,
         'counter': len(q)
@@ -217,44 +219,60 @@ def user_tasks_view(request):
 def reports(request):
     current_user_id = request.user.id
 
-    if request.GET['period'] == 'this_day':
-        parttasks = PartTask.objects.filter(user_id = current_user_id, date_start=datetime.date.today())
-        period = 'This day'
+    if request.method == 'GET':
+        if request.GET['period'] == 'this_day':
+            parttasks = PartTask.objects.filter(user_id = current_user_id, date_start=datetime.date.today())
+            period = 'This day'
 
-    elif request.GET['period'] == 'last_day':
-        parttasks = PartTask.objects.filter(user_id = current_user_id, date_start=datetime.date.today() - datetime.timedelta(days=1))
-        period = 'Last day'
+        elif request.GET['period'] == 'last_day':
+            parttasks = PartTask.objects.filter(user_id = current_user_id, date_start=datetime.date.today() - datetime.timedelta(days=1))
+            period = 'Last day'
 
-    elif request.GET['period'] == '15_days':
-        parttasks = PartTask.objects.filter(user_id = current_user_id, date_start__range = (datetime.date.today() - datetime.timedelta(days=15), datetime.date.today()))
-        period = 'Last 15 days'
+        elif request.GET['period'] == '15_days':
+            parttasks = PartTask.objects.filter(user_id = current_user_id, date_start__range = (datetime.date.today() - datetime.timedelta(days=15), datetime.date.today()))
+            period = 'Last 15 days'
 
-    elif request.GET['period'] == 'this_month':
-        parttasks = PartTask.objects.filter(user_id = current_user_id,
-            date_start__range = (datetime.date.today() - datetime.timedelta(days = (datetime.date.today().day - 1)), datetime.date.today()))
-        period = 'This month'
+        elif request.GET['period'] == 'this_month':
+            parttasks = PartTask.objects.filter(user_id = current_user_id,
+                date_start__range = (datetime.date.today() - datetime.timedelta(days = (datetime.date.today().day - 1)), datetime.date.today()))
+            period = 'This month'
 
-    elif request.GET['period'] == 'last_month':
-        date_minus_month = datetime.date.today() - monthdelta.relativedelta(months =+ 1)
-        month_length = monthrange (date_minus_month.year, date_minus_month.month)[1]
-        parttasks = PartTask.objects.filter(user_id = current_user_id, date_start__range = (date_minus_month.replace(day = 1), date_minus_month.replace(day = month_length)))
-        period = 'Last month'
+        elif request.GET['period'] == 'last_month':
+            date_minus_month = datetime.date.today() - monthdelta.relativedelta(months =+ 1)
+            month_length = monthrange (date_minus_month.year, date_minus_month.month)[1]
+            parttasks = PartTask.objects.filter(user_id = current_user_id, date_start__range = (date_minus_month.replace(day = 1), date_minus_month.replace(day = month_length)))
+            period = 'Last month'
 
+        elif request.method == "POST":
+            parttasks = PartTask.objects.filter(user_id = current_user_id, date_start=datetime.date.today())
+            period = 'This day'
 
-    usertasks = UserTask.objects.filter(user_id = current_user_id)
-    for usertask in usertasks:
-    	usertask.timer = 0
-    	for parttask in parttasks:
-    		if parttask.usertask_id == usertask.id:
-    			usertask.timer += parttask.time_length
+        usertasks = UserTask.objects.filter(user_id = current_user_id)
+        for usertask in usertasks:
+        	usertask.timer = 0
+        	for parttask in parttasks:
+        		if parttask.usertask_id == usertask.id:
+        			usertask.timer += parttask.time_length
 
-    context = {
-    	'usertasks': usertasks,
-        'period': period,
-        'counter': len(usertasks)
-        }
+        context = {
+        	'usertasks': usertasks,
+                'period': period,
+                'counter': len(usertasks)
+                }
 
-    return render(request, 'basic_app/report_page.html', context)
+        return render(request, 'basic_app/report_page.html', context)
+
+    elif request.method == 'POST':
+        print(request)
+        form = ReturnTaskForm(request.POST)
+        if form.is_valid():
+            name = form.cleaned_data['name']
+            to_show = form.cleaned_data['to_show']
+            usertask = UserTask.objects.get(name = name, user_id = current_user_id)
+            usertask.to_show = to_show
+            usertask.save()
+
+        return render(request, 'basic_app/report_page.html')
 
 def base(request):
 	link_to_site = 'https://community-open-weather-map.p.rapidapi.com/weather'

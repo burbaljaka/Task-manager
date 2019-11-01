@@ -38,3 +38,9 @@ class StopTaskForm(forms.ModelForm):
 
 # class ReportForm(forms.ModelForm):
 #     period = forms.CharField()
+
+class ReturnTaskForm(forms.ModelForm):
+
+    class Meta():
+        model = UserTask
+        fields = ('name', 'to_show')

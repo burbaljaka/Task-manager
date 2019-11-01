@@ -25,6 +25,7 @@ class UserTask(models.Model):
     color = models.CharField(max_length = 30, default = '0, 0, 0, 0')
     is_counting = models.IntegerField(default = 0)
     partnumber = models.IntegerField(default = 0)
+    to_show = models.IntegerField(default = 1)
 
     def __str__(self):
         return self.name

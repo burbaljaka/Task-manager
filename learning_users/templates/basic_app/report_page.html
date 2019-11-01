@@ -14,10 +14,20 @@
     </thead>
   {% for usertask in usertasks %}
     <tr>
-      <td>{{ usertask.name }}</td><td><label id="hours-{{ forloop.counter }}"> 00</label>:<label id = "minutes-{{ forloop.counter }}">00</label>:<label id = "seconds-{{ forloop.counter }}">00</label></td>
+      <form action="{% url 'basic_app:reports' %}" name="form-{{ forloop.counter}}" method="POST" autocomplete="off">
+
+      <td name = "td-{{ forloop.counter }}"><input type="text" for="id_name" name="name" id="id_name"  value="{{ usertask.name }}" style="display:none">{{ usertask.name }}</td><td><label id="hours-{{ forloop.counter }}"> 00</label>:<label id = "minutes-{{ forloop.counter }}">00</label>:<label id = "seconds-{{ forloop.counter }}">00</label></td>
+      <input for="id_to_show" type="number" name="to_show" id = "id_to_show" value="{{ usertask.to_show }}" style = "display:none">
+      {% if usertask.to_show %}
+      {% else %}
+      <td><button type="submit" name="return-{{ forloop.counter }}" onclick="return_task(this.name)">Return task</button></td>
+              {% csrf_token %}
+      {% endif %}
+      <td><label name="timer-{{ forloop.counter }}" style="display:none">{{ usertask.timer }}</label></td>
+      </form>
     </tr>
-    <label name="timer-{{ forloop.counter }}" style="display:none">{{ usertask.timer }}</label>
-    <!-- <h4>{{ usertask.name }}</h4> <span>{{ usertask.timer }}</span> -->
+
+
   {% endfor %}
   <thead>
     <td>Spent time for the period</td><td><label id="hours-final"> 00</label>:<label id = "minutes-final">00</label>:<label id = "seconds-final">00</label></td></td>
@@ -44,5 +54,10 @@
     document.getElementById("hours-final").innerText = pad(Math.floor(res/3600)); //часов
   }
 
+  function return_task(name){
+    item_number = name.split('-')[1];
+    document.getElementsByName("form-"+item_number.toString())[0][0].value=1;
+    document.getElementsByName("form-"+item_number.toString())[0].submit();
+  }
 </script>
 {% endblock %}
