@@ -243,9 +243,9 @@ def reports(request):
             parttasks = PartTask.objects.filter(user_id = current_user_id, date_start__range = (date_minus_month.replace(day = 1), date_minus_month.replace(day = month_length)))
             period = 'Last month'
 
-        elif request.method == "POST":
-            parttasks = PartTask.objects.filter(user_id = current_user_id, date_start=datetime.date.today())
-            period = 'This day'
+        # elif request.method == "POST":
+        #     parttasks = PartTask.objects.filter(user_id = current_user_id, date_start=datetime.date.today())
+        #     period = 'This day'
 
         usertasks = UserTask.objects.filter(user_id = current_user_id)
         for usertask in usertasks:
@@ -272,7 +272,24 @@ def reports(request):
             usertask.to_show = to_show
             usertask.save()
 
-        return render(request, 'basic_app/report_page.html')
+
+            parttasks = PartTask.objects.filter(user_id = current_user_id, date_start=datetime.date.today())
+            period = 'This day'
+            
+            usertasks = UserTask.objects.filter(user_id = current_user_id)
+            for usertask in usertasks:
+            	usertask.timer = 0
+            	for parttask in parttasks:
+            		if parttask.usertask_id == usertask.id:
+            			usertask.timer += parttask.time_length
+
+            context = {
+            	'usertasks': usertasks,
+                'period': period,
+                'counter': len(usertasks)
+                    }
+
+        return render(request, 'basic_app/report_page.html', context)
 
 def base(request):
 	link_to_site = 'https://community-open-weather-map.p.rapidapi.com/weather'
