@@ -1,0 +1,104 @@
+{% extends "basic_app/base.html" %}
+{% block body_block %}
+  <label id="counter" style="display:none">{{ counter }}</label>
+  {% for usertask in usertasks %}
+
+  <form action="{% url 'basic_app:user_tasks_view' %}" name="form-{{ forloop.counter}}" method="POST" autocomplete="off">
+    {% csrf_token %}
+    <input for="id_name" type="text" name="name" id="id_name" value="{{ usertask.name }}" style="display:block; border:none;">
+    <input name="timer-{{ forloop.counter }}" style="display:none" value = "{{ usertask.timer }}">
+    <label id="hours-{{ forloop.counter }}"> 00</label>:<label id = "minutes-{{ forloop.counter }}">00</label>:<label id = "seconds-{{ forloop.counter }}">00</label>
+    <input for="id_timer" type="number" name="timer" id="id_timer" value="{{ usertask.timer }}" style="display:none">
+    <input for="id_id" type="number" name="id" id = "id_id" value="{{ usertask.id }}" style="display:none">
+    <input for="id_is_counting" name="is_counting-{{ forloop.counter }}" id ="id_is_counting" value="{{ usertask.is_counting }}" style="display:none">
+    <input for="id_partnumber" type="number" name="partnumber" id ="id_partnumber" value="{{ usertask.partnumber }}" style="display:none">
+    <button type="submit" name="start_button" id="start_button" style="display:block">&#9658</button>
+    <button type="submit" name="stop_button" id="stop_button" style="display:none">■</button>
+    <button type="button" name="delete_button-{{ forloop.counter }}" id="delete_button" onclick="delete_task(this.name)">&#215</button>
+    <input type="text" name="fordelete" id="id_fordelete" value="No" style="display:none"</input>
+  </form>
+  {% endfor %}
+  <br>
+
+  <button type="button" id="create_button" onclick="create_new_task()" style="display:block">Создать задачу</button>
+
+  <form action="{% url 'basic_app:user_tasks_view' %}" method="POST" style="display:none" id="create_new_task_form" autocomplete="off">
+    {% csrf_token %}
+    <input type="text" name="name" id="id_name" value="" placeholder="Введите имя задачи" >
+    <input type="text" name="timer" id="id_timer" value="0" style="display:none">
+    <input type="text" name="id" id="id_id" value="0" style="display:none">
+    <input type="text" name="fordelete" id="id_fordelete" value="No" style="display:none"</input>
+    <input type="submit" name="task_button" value="Сохранить">
+  </form>
+
+  <button type="button" id="cancel_create_button" style="display:none" onclick="create_new_task()">Отмена</button>
+
+  <script type="text/javascript">
+
+    function pad (val) { return val > 9 ? val : "0" + val; };                   //дописываем 0, если число часов, минут или секунд меньше 10
+
+    loop_counter = parseInt(document.getElementById("counter").innerText, 10);  //берем число задач для пользователя из числа повтора цикла
+    if (loop_counter != 0) {
+      for ( let i = 1; i<(loop_counter+1); i++) {
+        var counting = document.getElementsByName("is_counting-"+i.toString())[0].value;
+        var sec = document.getElementsByName("timer-"+i.toString())[0].value;   //берем исходное значение секунд задачи
+        document.getElementById("seconds-"+i.toString()).innerText = pad(Math.floor(sec%60)); //заполняем для секунд
+        document.getElementById("minutes-"+i.toString()).innerText = pad(Math.floor(sec%3600/60));    //минут
+        document.getElementById("hours-"+i.toString()).innerText = pad(Math.floor(sec/3600)); //часов
+
+
+        if (counting === "1"){
+          document.getElementsByName('form-'+i.toString())[0][7].style.display = "none";
+          document.getElementsByName('form-'+i.toString())[0][8].style.display = "block";
+          start_time_counting(i);
+        }
+      }
+    }
+                                                     //объявляем переменнуЮ, которую будем использовать для счетчика
+
+    function start_time_counting(number) {
+          item_number = number;                             //определяем номер в имени нажатой кнопки
+
+          var sec = 0;   //берем нулевое значение секунд задачи
+          var time_counter = {};
+          time_counter = setInterval(function(){
+            document.getElementById("seconds-"+item_number.toString()).innerText=pad(Math.floor(++sec%60));               //функция плюсует только значение sec, которое брало цифру из базы данных
+            document.getElementById("minutes-"+item_number.toString()).innerText=pad(Math.floor(sec%3600/60));
+            document.getElementById("hours-"+item_number.toString()).innerText=pad(Math.floor(sec/3600))
+          }, 1000);
+      }
+
+    function stop_time_counting(clicked_name) {                                                     //остановка отсчета времени. Не сброс
+        clearInterval(time_counter);
+        item_number = clicked_name.split('-')[1];
+
+        hours = parseInt(document.getElementById("hours-"+item_number.toString()).innerText);
+        minutes = parseInt(document.getElementById("minutes-"+item_number.toString()).innerText);
+        seconds = parseInt(document.getElementById("seconds-"+item_number.toString()).innerText);
+        form_list = document.getElementsByName("form-"+item_number.toString())
+        form_list[0][2].value = seconds + minutes*60 + hours*3600;
+        form_list[0][3].value = (seconds + minutes*60 + hours*3600).toString();
+        document.getElementsByName("form-"+item_number.toString())[0].submit();
+      }
+
+    function create_new_task() {
+      if (document.getElementById("create_button").style.display==="block"){
+        document.getElementById("create_button").style.display="none";
+        document.getElementById("create_new_task_form").style.display="block";
+        document.getElementById("cancel_create_button").style.display="block";
+      }
+      else{
+        document.getElementById("create_button").style.display="block";
+        document.getElementById("create_new_task_form").style.display="none";
+        document.getElementById("cancel_create_button").style.display="none";
+      }
+    }
+
+    function delete_task(clicked_name) {
+      item_number = clicked_name.split('-')[1];
+      document.getElementsByName("form-"+item_number.toString())[0][10].value="Yes";
+      document.getElementsByName("form-"+item_number.toString())[0].submit();
+    }
+
+  </script>
+{% endblock %}
