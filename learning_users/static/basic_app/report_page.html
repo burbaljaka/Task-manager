@@ -1,63 +1,111 @@
 {% extends "basic_app/base.html" %}
 {% block body_block %}
-<label id="counter" style="display:none">{{ counter }}</label>
-<div class="panel panel-default">
-  <div class="panel-heading">Reports</div>
-  <div class="panel-body">
-    <p>{{ period }}</p>
+<div class="card shadow-sm mb-4">
+  <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+    <h4 class="mb-0">Reports</h4>
+    <span class="badge bg-light text-primary">{{ period }}</span>
   </div>
-
-
-  <table class="table">
-    <thead>
-      <td>Task name</td><td>Spent time</td>
-    </thead>
-  {% for usertask in usertasks %}
-    <tr>
-      <form action="{% url 'basic_app:reports' %}" name="form-{{ forloop.counter}}" method="POST" autocomplete="off">
-
-      <td name = "td-{{ forloop.counter }}"><input type="text" for="id_name" name="name" id="id_name"  value="{{ usertask.name }}" style="display:none">{{ usertask.name }}</td><td><label id="hours-{{ forloop.counter }}"> 00</label>:<label id = "minutes-{{ forloop.counter }}">00</label>:<label id = "seconds-{{ forloop.counter }}">00</label></td>
-      <input for="id_to_show" type="number" name="to_show" id = "id_to_show" value="{{ usertask.to_show }}" style = "display:none">
-      {% if usertask.to_show %}
-      {% else %}
-      <td><button type="submit" name="return-{{ forloop.counter }}" onclick="return_task(this.name)">Return task</button></td>
-              {% csrf_token %}
-      {% endif %}
-      <td><label name="timer-{{ forloop.counter }}" style="display:none">{{ usertask.timer }}</label></td>
-      </form>
-    </tr>
-
-
-  {% endfor %}
-  <thead>
-    <td>Spent time for the period</td><td><label id="hours-final"> 00</label>:<label id = "minutes-final">00</label>:<label id = "seconds-final">00</label></td></td>
-  </thead>
-  </table>
+  <div class="card-body">
+    <!-- Summary statistics -->
+    <div class="row mb-3">
+      <div class="col-md-4">
+        <div class="p-3 bg-light rounded text-center">
+          <div class="fw-bold fs-5">Total Tasks</div>
+          <div class="fs-4">{{ usertasks|length }}</div>
+        </div>
+      </div>
+      <div class="col-md-4">
+        <div class="p-3 bg-light rounded text-center">
+          <div class="fw-bold fs-5">Total Time</div>
+          <div class="fs-4" id="total-time">00:00:00</div>
+        </div>
+      </div>
+      <div class="col-md-4">
+        <div class="p-3 bg-light rounded text-center">
+          <div class="fw-bold fs-5">Average Time/Task</div>
+          <div class="fs-4" id="avg-time">00:00:00</div>
+        </div>
+      </div>
+    </div>
+    <!-- Toggle buttons -->
+    <div class="d-flex justify-content-end mb-3">
+      <a href="?period={{ period|urlencode }}&show=active" class="btn btn-sm{% if not show_all %} btn-primary{% else %} btn-outline-primary{% endif %} me-2">Active tasks</a>
+      <a href="?period={{ period|urlencode }}&show=all" class="btn btn-sm{% if show_all %} btn-primary{% else %} btn-outline-primary{% endif %}">All tasks</a>
+    </div>
+    <!-- Table -->
+    <div class="table-responsive">
+      <table class="table table-striped align-middle">
+        <thead class="table-primary">
+          <tr>
+            <th>Task name</th>
+            <th>Spent time</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for usertask in usertasks %}
+          <tr>
+            <td>{{ usertask.name }}</td>
+            <td><span class="task-time" data-seconds="{{ usertask.timer|default:0 }}">00:00:00</span></td>
+            <td>
+              {% if not usertask.to_show %}
+                <form action="{% url 'basic_app:reports' %}" method="POST" class="d-inline">{% csrf_token %}
+                  <input type="hidden" name="name" value="{{ usertask.name }}">
+                  <input type="hidden" name="to_show" value="{{ usertask.to_show }}">
+                  <button type="submit" class="btn btn-outline-danger btn-sm">Return task</button>
+                </form>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <!-- Chart.js canvas -->
+    <div class="mt-4">
+      <canvas id="reportChart" height="80"></canvas>
+    </div>
+  </div>
 </div>
-
-<script type="text/javascript">
-
-  function pad (val) { return val > 9 ? val : "0" + val; };                   //дописываем 0, если число часов, минут или секунд меньше 10
-
-  loop_counter = parseInt(document.getElementById("counter").innerText, 10);  //берем число задач для пользователя из числа повтора цикла
-  if (loop_counter != 0) {
-    var res = 0
-    for ( let i = 1; i<(loop_counter+1); i++) {
-      var sec = parseInt(document.getElementsByName("timer-"+i.toString())[0].innerText, 10);   //берем исходное значение секунд задачи
-      document.getElementById("seconds-"+i.toString()).innerText = pad(Math.floor(sec%60)); //заполняем для секунд
-      document.getElementById("minutes-"+i.toString()).innerText = pad(Math.floor(sec%3600/60));    //минут
-      document.getElementById("hours-"+i.toString()).innerText = pad(Math.floor(sec/3600)); //часов
-      res = res + sec;
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+  // Format seconds to HH:MM:SS
+  function formatTime(sec) {
+    let h = Math.floor(sec/3600);
+    let m = Math.floor((sec%3600)/60);
+    let s = sec%60;
+    return `${h.toString().padStart(2,'0')}:${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}`;
+  }
+  // Update times in table
+  let total = 0;
+  let count = 0;
+  document.querySelectorAll('.task-time').forEach(el => {
+    let sec = parseInt(el.dataset.seconds, 10) || 0;
+    el.textContent = formatTime(sec);
+    total += sec;
+    count++;
+  });
+  document.getElementById('total-time').textContent = formatTime(total);
+  document.getElementById('avg-time').textContent = count ? formatTime(Math.floor(total/count)) : '00:00:00';
+  // Chart.js - Bar chart for time per task
+  const ctx = document.getElementById('reportChart').getContext('2d');
+  const chart = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: Array.from(document.querySelectorAll('.task-time')).map((_,i) => `Task ${i+1}`),
+      datasets: [{
+        label: 'Time (seconds)',
+        data: Array.from(document.querySelectorAll('.task-time')).map(el => parseInt(el.dataset.seconds, 10)),
+        backgroundColor: 'rgba(13,110,253,0.5)',
+        borderColor: 'rgba(13,110,253,1)',
+        borderWidth: 1
+      }]
+    },
+    options: {
+      responsive: true,
+      plugins: { legend: { display: false } },
+      scales: { y: { beginAtZero: true } }
     }
-    document.getElementById("seconds-final").innerText = pad(Math.floor(res%60)); //заполняем для секунд
-    document.getElementById("minutes-final").innerText = pad(Math.floor(res%3600/60));    //минут
-    document.getElementById("hours-final").innerText = pad(Math.floor(res/3600)); //часов
-  }
-
-  function return_task(name){
-    item_number = name.split('-')[1];
-    document.getElementsByName("form-"+item_number.toString())[0][0].value=1;
-    document.getElementsByName("form-"+item_number.toString())[0].submit();
-  }
+  });
 </script>
 {% endblock %}

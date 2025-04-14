@@ -13,6 +13,7 @@ import datetime
 from django.utils import timezone
 from dateutil import relativedelta as monthdelta
 from calendar import monthrange
+import requests
 
 
 def index(request):
@@ -215,6 +216,17 @@ def user_tasks_view(request):
         print(request.POST)
 
     q = UserTask.objects.filter(user_id=current_user_id, to_show=1)
+    today = datetime.date.today()
+    for task in q:
+        today_parts = PartTask.objects.filter(usertask_id=task.id, user_id=current_user_id, date_start=today)
+        task.today_seconds = sum([p.time_length for p in today_parts])
+        if task.is_counting:
+            try:
+                running_part = PartTask.objects.get(usertask_id=task.id, user_id=current_user_id, date_start=today, datetime_stop='0001-01-01 00:00:00')
+                running_time = (datetime.datetime.now() - running_part.datetime_start).total_seconds()
+                task.today_seconds += int(running_time)
+            except PartTask.DoesNotExist:
+                pass
     context = {
         'usertasks': q,
         'counter': len(q)
@@ -226,38 +238,41 @@ def reports(request):
     current_user_id = request.user.id
 
     if request.method == 'GET':
-        if request.GET['period'] == 'this_day':
+        if request.GET.get('period') == 'this_day':
             parttasks = PartTask.objects.filter(user_id=current_user_id, date_start=datetime.date.today(), )
             period = 'This day'
 
-        elif request.GET['period'] == 'last_day':
+        elif request.GET.get('period') == 'last_day':
             parttasks = PartTask.objects.filter(user_id=current_user_id,
                                                 date_start=datetime.date.today() - datetime.timedelta(days=1))
             period = 'Last day'
 
-        elif request.GET['period'] == '15_days':
+        elif request.GET.get('period') == '15_days':
             parttasks = PartTask.objects.filter(user_id=current_user_id, date_start__range=(
                 datetime.date.today() - datetime.timedelta(days=15), datetime.date.today()))
             period = 'Last 15 days'
 
-        elif request.GET['period'] == 'this_month':
+        elif request.GET.get('period') == 'this_month':
             parttasks = PartTask.objects.filter(user_id=current_user_id,
                                                 date_start__range=(datetime.date.today() - datetime.timedelta(
                                                     days=(datetime.date.today().day - 1)), datetime.date.today()))
             period = 'This month'
 
-        elif request.GET['period'] == 'last_month':
+        elif request.GET.get('period') == 'last_month':
             date_minus_month = datetime.date.today() - monthdelta.relativedelta(months=+ 1)
             month_length = monthrange(date_minus_month.year, date_minus_month.month)[1]
             parttasks = PartTask.objects.filter(user_id=current_user_id, date_start__range=(
                 date_minus_month.replace(day=1), date_minus_month.replace(day=month_length)))
             period = 'Last month'
 
-        # elif request.method == "POST":
-        #     parttasks = PartTask.objects.filter(user_id = current_user_id, date_start=datetime.date.today())
-        #     period = 'This day'
+        else:
+            parttasks = PartTask.objects.none()
+            period = 'No period selected'
 
+        show_all = request.GET.get('show', 'active') == 'all'
         usertasks = UserTask.objects.filter(user_id=current_user_id)
+        if not show_all:
+            usertasks = usertasks.filter(to_show=1)
         for usertask in usertasks:
             usertask.timer = 0
             for parttask in parttasks:
@@ -267,7 +282,8 @@ def reports(request):
         context = {
             'usertasks': usertasks,
             'period': period,
-            'counter': len(usertasks)
+            'counter': len(usertasks),
+            'show_all': show_all
         }
 
         return render(request, 'basic_app/report_page.html', context)

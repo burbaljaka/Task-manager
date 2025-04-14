@@ -8,6 +8,7 @@
     <input for="id_name" type="text" name="name" id="id_name" value="{{ usertask.name }}" style="display:block; border:none;">
     <input name="timer-{{ forloop.counter }}" style="display:none" value = "{{ usertask.timer }}">
     <label id="hours-{{ forloop.counter }}"> 00</label>:<label id = "minutes-{{ forloop.counter }}">00</label>:<label id = "seconds-{{ forloop.counter }}">00</label>
+    <span class="ms-2 text-primary small">Сегодня: <span class="today-time" data-seconds="{{ usertask.today_seconds|default:0 }}">00:00:00</span></span>
     <input for="id_timer" type="number" name="timer" id="id_timer" value="{{ usertask.timer }}" style="display:none">
     <input for="id_id" type="number" name="id" id = "id_id" value="{{ usertask.id }}" style="display:none">
     <input for="id_is_counting" name="is_counting-{{ forloop.counter }}" id ="id_is_counting" value="{{ usertask.is_counting }}" style="display:none">
@@ -15,7 +16,7 @@
     <button type="submit" name="start_button" id="start_button" style="display:block">&#9658</button>
     <button type="submit" name="stop_button" id="stop_button" style="display:none">■</button>
     <button type="button" name="delete_button-{{ forloop.counter }}" id="delete_button" onclick="delete_task(this.name)">&#215</button>
-    <input type="text" name="fordelete" id="id_fordelete" value="No" style="display:none"</input>
+    <input type="text" name="fordelete" id="id_fordelete" value="No" style="display:none"></input>
   </form>
   {% endfor %}
   <br>
@@ -46,6 +47,9 @@
         document.getElementById("minutes-"+i.toString()).innerText = pad(Math.floor(sec%3600/60));    //минут
         document.getElementById("hours-"+i.toString()).innerText = pad(Math.floor(sec/3600)); //часов
 
+        // Update today's time label
+        var today_sec = document.getElementsByClassName("today-time")[i-1].dataset.seconds;
+        document.getElementsByClassName("today-time")[i-1].textContent = pad(Math.floor(today_sec/3600))+":"+pad(Math.floor(today_sec%3600/60))+":"+pad(Math.floor(today_sec%60));
 
         if (counting === "1"){
           document.getElementsByName('form-'+i.toString())[0][7].style.display = "none";
