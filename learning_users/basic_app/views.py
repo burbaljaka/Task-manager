@@ -7,6 +7,7 @@ from django.contrib.auth import authenticate, login, logout
 from django.http import HttpResponseRedirect, HttpResponse
 from django.urls import reverse
 from django.contrib.auth.decorators import login_required
+from django.db.models import Prefetch
 import time
 from threading import Timer
 import datetime
@@ -128,13 +129,76 @@ def user_login(request):
         return render(request, 'basic_app/login.html', {})
 
 
+def update_overdue_priorities(user_id):
+    """Check and update priorities for overdue tasks"""
+    overdue_tasks = UserTask.objects.filter(
+        user_id=user_id,
+        to_show=1,
+        due_date__lt=datetime.date.today()
+    )
+    updated_count = 0
+    for task in overdue_tasks:
+        if task.update_priority_if_overdue():
+            updated_count += 1
+    return updated_count
+    return updated_count
+
+
+def get_task_hierarchy(user_id, exclude_completed=True):
+    """Organize tasks into hierarchy with parent tasks and subtasks"""
+    # Get all tasks for user, excluding completed tasks by default
+    query = UserTask.objects.filter(
+        user_id=user_id,
+        to_show=1
+    )
+    if exclude_completed:
+        query = query.exclude(status='COMPLETED')
+    
+    all_tasks = list(query.prefetch_related('subtasks').select_related('parent_task'))
+    
+    # Create a dictionary to map task IDs to task objects for quick lookup
+    task_dict = {task.id: task for task in all_tasks}
+    
+    # Initialize subtasks_list for all tasks
+    for task in all_tasks:
+        task.subtasks_list = []
+    
+    # Separate parent tasks (no parent_task) and organize subtasks
+    parent_tasks = []
+    for task in all_tasks:
+        # Check if task has a parent using parent_task_id (more reliable than parent_task object)
+        parent_id = getattr(task, 'parent_task_id', None)
+        if parent_id is None:
+            # No parent, this is a top-level task
+            parent_tasks.append(task)
+        else:
+            # This is a subtask, add it to its parent's subtasks_list
+            if parent_id in task_dict:
+                parent_task = task_dict[parent_id]
+                parent_task.subtasks_list.append(task)
+            else:
+                # Parent not found in task_dict (shouldn't happen, but handle gracefully)
+                # This might be a data inconsistency - log or handle as needed
+                pass
+    
+    return parent_tasks
+
+
 def user_tasks_view(request):
     current_user_id = request.user.id
-    q = UserTask.objects.filter(user_id=current_user_id, to_show=1)
+    
+    # Update overdue priorities
+    update_overdue_priorities(current_user_id)
+    
+    # Get tasks with subtasks organized in hierarchy
+    parent_tasks = get_task_hierarchy(current_user_id)
+    
+    # Handle running timers
     parttasks = PartTask.objects.filter(datetime_stop='0001-01-01 00:00:00')
+    all_tasks_flat = UserTask.objects.filter(user_id=current_user_id, to_show=1)
     if len(parttasks) > 0:
         for parttask in parttasks:
-            for task in q:
+            for task in all_tasks_flat:
                 if parttask.usertask_id == task.id:
                     task.timer = round((datetime.datetime.now() - parttask.datetime_start).total_seconds())
 
@@ -190,46 +254,149 @@ def user_tasks_view(request):
             print(form)
 
     elif request.method == "POST":
-        form = UserTaskForm(request.POST)
+        form = UserTaskForm(request.POST, user=request.user)
+        # Set user on form instance before validation to avoid RelatedObjectDoesNotExist error
+        if not form.instance.pk:  # New task
+            form.instance.user = request.user
         if form.is_valid():
-            name = form.cleaned_data['name']
-            timer = form.cleaned_data['timer']
-            ident = form.cleaned_data['id']
-            to_delete = form.cleaned_data['fordelete']
-            if ident != 0:
-                userform = UserTask.objects.get(pk=ident)
-                if to_delete == "No":
-                    userform.name = name
-                    userform.timer = timer
-                    userform.save()
-                else:
-                    userform = UserTask.objects.get(pk=ident)
-                    userform.to_show = 0
-                    userform.save()
+            ident = form.cleaned_data.get('id', 0)
+            to_delete = form.cleaned_data.get('fordelete', 'No')
+            
+            if ident and ident != 0:
+                # Update existing task
+                try:
+                    userform = UserTask.objects.get(pk=ident, user=request.user)
+                    if to_delete == "Yes":
+                        userform.to_show = 0
+                        userform.save()
+                    else:
+                        # Update all fields
+                        userform.name = form.cleaned_data['name']
+                        userform.timer = form.cleaned_data['timer']
+                        userform.status = form.cleaned_data.get('status', 'TODO')
+                        userform.due_date = form.cleaned_data.get('due_date')
+                        userform.priority = form.cleaned_data.get('priority', 2)
+                        userform.comment = form.cleaned_data.get('comment', '')
+                        userform.parent_task = form.cleaned_data.get('parent_task')
+                        userform.save()
+                except UserTask.DoesNotExist:
+                    pass  # Task doesn't exist, ignore
             else:
-                userform = UserTask(name=name, user_id=current_user_id)
-                userform.save()
+                # Create new task - only if name is provided
+                task_name = form.cleaned_data.get('name', '').strip()
+                if task_name:  # Only create if name is not empty
+                    parent_task = form.cleaned_data.get('parent_task')
+                
+                # Validate parent_task belongs to same user if provided
+                if parent_task:
+                    # Refresh parent_task from database to ensure it has all attributes
+                    try:
+                        parent_task = UserTask.objects.get(pk=parent_task.pk)
+                        if parent_task.user != request.user:
+                            form.add_error('parent_task', 'Parent task must belong to the same user.')
+                            parent_task = None  # Don't use invalid parent
+                    except UserTask.DoesNotExist:
+                        form.add_error('parent_task', 'Parent task does not exist.')
+                        parent_task = None
+                
+                if not form.errors:
+                    userform = UserTask(
+                        name=form.cleaned_data['name'],
+                        user=request.user,
+                        timer=form.cleaned_data.get('timer', 0),
+                        status=form.cleaned_data.get('status', 'TODO'),
+                        due_date=form.cleaned_data.get('due_date'),
+                        priority=form.cleaned_data.get('priority', 2),
+                        comment=form.cleaned_data.get('comment', ''),
+                        parent_task=parent_task
+                    )
+                    # Save - model's save() will call full_clean() for validation
+                    userform.save()
         else:
-            print('333', form)
+            print('Form errors:', form.errors)
 
-    else:
-        print(request.POST)
-
-    q = UserTask.objects.filter(user_id=current_user_id, to_show=1)
+    # Rebuild hierarchy after potential changes (excluding completed tasks)
+    parent_tasks = get_task_hierarchy(current_user_id, exclude_completed=True)
+    
+    # Get completed tasks from the last week
     today = datetime.date.today()
-    for task in q:
+    week_ago = today - datetime.timedelta(days=7)
+    completed_tasks_all = get_task_hierarchy(current_user_id, exclude_completed=False)
+    # Filter to only completed tasks from last week
+    completed_tasks_last_week = []
+    for task in completed_tasks_all:
+        if task.status == 'COMPLETED' and task.completion_date and task.completion_date >= week_ago:
+            completed_tasks_last_week.append(task)
+    
+    # Calculate today's time for all tasks (including subtasks)
+    all_tasks_flat = UserTask.objects.filter(user_id=current_user_id, to_show=1).exclude(status='COMPLETED')
+    
+    def add_today_time_and_helpers(task):
+        """Add today's time and helper properties for template, including subtask aggregation"""
+        # Calculate this task's own time (not including subtasks yet)
         today_parts = PartTask.objects.filter(usertask_id=task.id, user_id=current_user_id, date_start=today)
         task.today_seconds = sum([p.time_length for p in today_parts])
-        if task.is_counting:
+        task.total_timer = task.timer  # Start with task's own timer
+        
+        # Add running time if task is currently counting
+        if task.is_counting and task.partnumber:
             try:
-                running_part = PartTask.objects.get(usertask_id=task.id, user_id=current_user_id, date_start=today, datetime_stop='0001-01-01 00:00:00')
-                running_time = (datetime.datetime.now() - running_part.datetime_start).total_seconds()
-                task.today_seconds += int(running_time)
-            except PartTask.DoesNotExist:
+                # Use partnumber to get the specific running PartTask
+                running_part = PartTask.objects.get(pk=task.partnumber)
+                # Verify it's still running (datetime_stop is default value or null)
+                if running_part.datetime_stop.year == 1 or running_part.datetime_stop.year < 2000:
+                    running_time = (datetime.datetime.now() - running_part.datetime_start).total_seconds()
+                    task.today_seconds += int(running_time)
+                    # Add running time to total timer for display
+                    task.total_timer += int(running_time)
+            except (PartTask.DoesNotExist, AttributeError):
                 pass
+        
+        # Process subtasks recursively (bottom-up approach)
+        subtask_total_time = 0
+        subtask_today_time = 0
+        if hasattr(task, 'subtasks_list') and task.subtasks_list:
+            for subtask in task.subtasks_list:
+                add_today_time_and_helpers(subtask)
+                # Accumulate subtask times into parent
+                subtask_total_time += getattr(subtask, 'total_timer', subtask.timer)
+                subtask_today_time += getattr(subtask, 'today_seconds', 0)
+        
+        # Add subtask times to parent task's totals
+        task.total_timer += subtask_total_time
+        task.today_seconds += subtask_today_time
+        
+        # Add due date helper properties
+        if task.due_date:
+            days_diff = (task.due_date - today).days
+            if days_diff < 0:
+                task.due_date_class = 'due-date-overdue'
+                task.due_date_text = f"{task.due_date.strftime('%b %d')} ({abs(days_diff)}d ago)"
+            elif days_diff == 0:
+                task.due_date_class = 'due-date-today'
+                task.due_date_text = "Today"
+            elif days_diff <= 3:
+                task.due_date_class = 'due-date-soon'
+                task.due_date_text = f"{days_diff}d left"
+            else:
+                task.due_date_class = 'due-date-normal'
+                task.due_date_text = task.due_date.strftime('%b %d')
+        else:
+            task.due_date_class = 'due-date-none'
+            task.due_date_text = None
+    
+    for task in parent_tasks:
+        add_today_time_and_helpers(task)
+    
+    # Process completed tasks for display (add time helpers)
+    for task in completed_tasks_last_week:
+        add_today_time_and_helpers(task)
+    
     context = {
-        'usertasks': q,
-        'counter': len(q)
+        'usertasks': parent_tasks,
+        'completed_tasks': completed_tasks_last_week,
+        'counter': len(all_tasks_flat),
+        'today': today
     }
     return render(request, 'basic_app/tasks.html', context)
 

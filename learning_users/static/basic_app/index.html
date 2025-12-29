@@ -2,14 +2,74 @@
 {% block body_block %}
 
 <div class="container">
-  <div class="jumbotron">
-    <h1>Your personal <strong>Task Manager</strong></h1>
-    {% if user.is_authenticated %}
-        <h2>Welcome {{ user.username }}!</h2>
-    {% else %}
-        <h2>Welcome to the site!</h2>
-    {% endif %}
+  <div class="row justify-content-center">
+    <div class="col-12 col-md-10 col-lg-8">
+      <div class="card shadow-lg border-0 mt-4" style="border-radius: 20px; overflow: hidden;">
+        <div class="card-header text-center py-5" style="background: linear-gradient(135deg, #4a6fa5 0%, #6b8fc7 100%); border: none;">
+          <h1 class="text-white fw-bold mb-3" style="font-size: 2.5rem;">
+            Your personal <strong>Task Manager</strong>
+          </h1>
+          {% if user.is_authenticated %}
+            <h2 class="text-white-50 mb-0" style="font-size: 1.25rem;">Welcome {{ user.username }}!</h2>
+          {% else %}
+            <h2 class="text-white-50 mb-0" style="font-size: 1.25rem;">Welcome to the site!</h2>
+          {% endif %}
+        </div>
+        <div class="card-body p-5 text-center">
+          {% if user.is_authenticated %}
+            <p class="lead mb-4" style="color: #4a6fa5;">
+              Ready to manage your tasks efficiently?
+            </p>
+            <a href="{% url 'basic_app:user_tasks_view' %}" class="btn btn-lg text-white fw-bold" style="background: linear-gradient(135deg, #4a6fa5 0%, #6b8fc7 100%); border: none; border-radius: 12px; padding: 0.75rem 2rem;">
+              Go to Your Tasks
+            </a>
+          {% else %}
+            <p class="lead mb-4" style="color: #4a6fa5;">
+              Start organizing your tasks today!
+            </p>
+            <div class="d-flex flex-column flex-sm-row gap-3 justify-content-center">
+              <a href="{% url 'basic_app:user_login' %}" class="btn btn-lg text-white fw-bold" style="background: linear-gradient(135deg, #4a6fa5 0%, #6b8fc7 100%); border: none; border-radius: 12px; padding: 0.75rem 2rem;">
+                Login
+              </a>
+              <a href="{% url 'basic_app:register' %}" class="btn btn-lg btn-outline-primary fw-bold" style="border: 2px solid #4a6fa5; color: #4a6fa5; border-radius: 12px; padding: 0.75rem 2rem;">
+                Register
+              </a>
+            </div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
   </div>
 </div>
 
+<style>
+  .card {
+    animation: fadeInUp 0.5s ease-out;
+  }
+  
+  @keyframes fadeInUp {
+    from {
+      opacity: 0;
+      transform: translateY(20px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  
+  @media (max-width: 768px) {
+    .card-header h1 {
+      font-size: 1.75rem !important;
+    }
+    
+    .card-header h2 {
+      font-size: 1rem !important;
+    }
+    
+    .card-body {
+      padding: 2rem 1.5rem !important;
+    }
+  }
+</style>
 {% endblock %}

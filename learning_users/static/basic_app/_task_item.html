@@ -1,0 +1,133 @@
+{% if task %}
+<div class="task-card{% if level > 0 %} subtask-card{% endif %}{% if task.is_counting %} running-task{% endif %}" 
+     data-task-id="{{ task.id }}" 
+     data-is-counting="{{ task.is_counting }}" 
+     data-timer="{{ task.total_timer|default:task.timer }}" 
+     data-today-seconds="{{ task.today_seconds|default:0 }}"
+     {% if task.parent_task %}data-parent-task-id="{{ task.parent_task.id }}"{% endif %}>
+  <div class="task-card-body">
+    <form action="{% url 'basic_app:user_tasks_view' %}" name="form-{{ task.id }}" method="POST" autocomplete="off">
+      {% csrf_token %}
+      
+      <!-- Metadata Bar -->
+      <div class="task-metadata-bar">
+        <!-- Priority Stars -->
+        <span class="priority-stars priority-{{ task.get_priority_display_name|lower }}" title="{{ task.get_priority_display_name }} Priority">
+          {% if task.priority >= 1 %}<span class="priority-star">★</span>{% else %}<span class="priority-star">☆</span>{% endif %}
+          {% if task.priority >= 2 %}<span class="priority-star">★</span>{% else %}<span class="priority-star">☆</span>{% endif %}
+          {% if task.priority >= 3 %}<span class="priority-star">★</span>{% else %}<span class="priority-star">☆</span>{% endif %}
+          {% if task.priority >= 4 %}<span class="priority-star">★</span>{% else %}<span class="priority-star">☆</span>{% endif %}
+        </span>
+        
+        <!-- Status Badge (Editable) -->
+        <select name="status" class="status-badge status-{{ task.status|lower }} form-control form-control-sm" 
+                onchange="updateTaskField({{ task.id }}, 'status', this.value)" 
+                style="display:inline-block; width:auto; padding: 0.25rem 0.5rem; font-size: 0.75rem; border-radius: 0.25rem; cursor: pointer;">
+          <option value="TODO"{% if task.status == 'TODO' %} selected{% endif %}>TODO</option>
+          <option value="IN_PROGRESS"{% if task.status == 'IN_PROGRESS' %} selected{% endif %}>IN_PROGRESS</option>
+          <option value="COMPLETED"{% if task.status == 'COMPLETED' %} selected{% endif %}>COMPLETED</option>
+          <option value="CANCELLED"{% if task.status == 'CANCELLED' %} selected{% endif %}>CANCELLED</option>
+        </select>
+        
+        <!-- Due Date Badge (Editable) -->
+        <input type="date" name="due_date" 
+               value="{% if task.due_date %}{{ task.due_date|date:'Y-m-d' }}{% endif %}" 
+               class="due-date-input form-control form-control-sm" 
+               onchange="updateTaskField({{ task.id }}, 'due_date', this.value)"
+               style="display:inline-block; width:auto; padding: 0.25rem 0.5rem; font-size: 0.75rem; border-radius: 0.25rem; cursor: pointer; max-width: 140px;"
+               placeholder="Set due date">
+        
+        <!-- Comment Toggle -->
+        <button type="button" class="comment-toggle" onclick="toggleComment({{ task.id }})">
+          💬
+          {% if task.comment %}
+          <span class="comment-badge">1</span>
+          {% endif %}
+        </button>
+      </div>
+      
+      <!-- Main Row -->
+      <div class="task-main-row">
+        <!-- Task Name Section -->
+        <div class="task-name-section">
+          <input type="text" name="name" value="{{ task.name }}" id="task-name-{{ task.id }}" data-original-name="{{ task.name }}" class="form-control form-control-sm rounded-pill bg-white border-0 fw-semibold px-2 py-1 me-2" style="max-width:400px; min-width:200px; box-shadow:0 1px 4px rgba(74,111,165,0.05); font-size: 0.9rem; cursor: text;" onblur="updateTaskName({{ task.id }}, this.value)" onkeypress="if(event.key === 'Enter') { event.preventDefault(); this.blur(); }">
+          
+          <!-- Hidden fields -->
+          <input type="number" name="timer" value="{{ task.timer }}" style="display:none">
+          <input type="number" name="id" value="{{ task.id }}" style="display:none">
+          <input type="number" name="is_counting" value="{{ task.is_counting }}" style="display:none">
+          <input type="number" name="partnumber" value="{{ task.partnumber }}" style="display:none">
+          <input type="text" name="fordelete" value="No" style="display:none">
+          
+          <!-- Priority, Parent Task (hidden, updated via metadata bar) -->
+          <!-- Status and Due Date are now editable in metadata bar -->
+          <input type="number" name="priority" value="{{ task.priority }}" min="1" max="4" style="display:none">
+          {% if task.parent_task %}
+          <input type="number" name="parent_task" value="{{ task.parent_task.id }}" style="display:none">
+          {% endif %}
+        </div>
+        
+        <!-- Timer Section -->
+        <div class="task-timer-section">
+          <label id="hours-{{ task.id }}">00</label>:<label id="minutes-{{ task.id }}">00</label>:<label id="seconds-{{ task.id }}">00</label>
+          <span class="ms-2 text-primary small">Сегодня: <span class="today-time" data-today-time="{{ task.id }}" data-seconds="{{ task.today_seconds|default:0 }}">00:00:00</span></span>
+        </div>
+        
+        <!-- Action Buttons -->
+        <div class="task-actions">
+          <button type="submit" name="start_button" class="btn btn-outline-primary btn-sm rounded-pill me-1" style="display:block;">▶</button>
+          <button type="submit" name="stop_button" class="btn stop-btn btn-sm rounded-pill me-1" style="display:none;">■</button>
+          <button type="button" class="btn btn-outline-info btn-sm rounded-pill me-1" onclick="create_subtask({{ task.id }})" title="Add Subtask">+</button>
+          <button type="button" name="delete_button-{{ task.id }}" class="btn btn-outline-danger btn-sm rounded-pill" onclick="delete_task(this.name)">×</button>
+        </div>
+      </div>
+      
+      <!-- Comment Section -->
+      <div class="comment-section" id="comment-section-{{ task.id }}">
+        {% if task.comment %}
+        <div class="comment-preview" id="comment-preview-{{ task.id }}" onclick="editComment({{ task.id }})">{{ task.comment }}</div>
+        {% endif %}
+        <textarea name="comment" id="comment-textarea-{{ task.id }}" class="comment-textarea{% if task.comment %} comment-textarea-hidden{% endif %}" rows="2" data-original-comment="{{ task.comment|default:'' }}" placeholder="Add a comment..." onblur="updateTaskComment({{ task.id }}, this.value)" onfocus="this.classList.remove('comment-textarea-hidden')"></textarea>
+      </div>
+    </form>
+    
+    <!-- Subtasks Container -->
+    {% if task.subtasks_list %}
+      {% with subtasks=task.subtasks_list %}
+        {% if subtasks|length > 0 %}
+        <div class="subtask-container has-subtasks">
+          <button type="button" class="expand-toggle" data-toggle-subtasks="{{ task.id }}" onclick="toggleSubtasks({{ task.id }})">
+            Subtasks ({{ subtasks|length }})
+          </button>
+          <div class="subtasks-list" id="subtasks-{{ task.id }}">
+            {% for subtask in subtasks %}
+              {% with task=subtask level=1 %}
+                {% include "basic_app/_task_item.html" %}
+              {% endwith %}
+            {% endfor %}
+          </div>
+        </div>
+        {% endif %}
+      {% endwith %}
+    {% elif task.id %}
+      <!-- Fallback: Check if task has subtasks via related manager -->
+      {% with subtasks_count=task.subtasks.count %}
+        {% if subtasks_count > 0 %}
+        <div class="subtask-container has-subtasks">
+          <button type="button" class="expand-toggle" data-toggle-subtasks="{{ task.id }}" onclick="toggleSubtasks({{ task.id }})">
+            Subtasks ({{ subtasks_count }})
+          </button>
+          <div class="subtasks-list" id="subtasks-{{ task.id }}">
+            {% for subtask in task.subtasks.all %}
+              {% with task=subtask level=1 %}
+                {% include "basic_app/_task_item.html" %}
+              {% endwith %}
+            {% endfor %}
+          </div>
+        </div>
+        {% endif %}
+      {% endwith %}
+    {% endif %}
+  </div>
+</div>
+{% endif %}

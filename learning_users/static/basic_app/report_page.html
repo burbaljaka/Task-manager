@@ -1,35 +1,35 @@
 {% extends "basic_app/base.html" %}
 {% block body_block %}
 <div class="card shadow-sm mb-4">
-  <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
-    <h4 class="mb-0">Reports</h4>
+  <div class="card-header bg-primary text-white d-flex flex-column flex-md-row justify-content-between align-items-center">
+    <h4 class="mb-2 mb-md-0">Reports</h4>
     <span class="badge bg-light text-primary">{{ period }}</span>
   </div>
   <div class="card-body">
     <!-- Summary statistics -->
-    <div class="row mb-3">
-      <div class="col-md-4">
-        <div class="p-3 bg-light rounded text-center">
-          <div class="fw-bold fs-5">Total Tasks</div>
-          <div class="fs-4">{{ usertasks|length }}</div>
+    <div class="row mb-3 g-3">
+      <div class="col-12 col-sm-6 col-md-4">
+        <div class="p-3 bg-light rounded text-center h-100">
+          <div class="fw-bold fs-6 fs-md-5">Total Tasks</div>
+          <div class="fs-5 fs-md-4">{{ usertasks|length }}</div>
         </div>
       </div>
-      <div class="col-md-4">
-        <div class="p-3 bg-light rounded text-center">
-          <div class="fw-bold fs-5">Total Time</div>
-          <div class="fs-4" id="total-time">00:00:00</div>
+      <div class="col-12 col-sm-6 col-md-4">
+        <div class="p-3 bg-light rounded text-center h-100">
+          <div class="fw-bold fs-6 fs-md-5">Total Time</div>
+          <div class="fs-5 fs-md-4" id="total-time">00:00:00</div>
         </div>
       </div>
-      <div class="col-md-4">
-        <div class="p-3 bg-light rounded text-center">
-          <div class="fw-bold fs-5">Average Time/Task</div>
-          <div class="fs-4" id="avg-time">00:00:00</div>
+      <div class="col-12 col-sm-12 col-md-4">
+        <div class="p-3 bg-light rounded text-center h-100">
+          <div class="fw-bold fs-6 fs-md-5">Average Time/Task</div>
+          <div class="fs-5 fs-md-4" id="avg-time">00:00:00</div>
         </div>
       </div>
     </div>
     <!-- Toggle buttons -->
-    <div class="d-flex justify-content-end mb-3">
-      <a href="?period={{ period|urlencode }}&show=active" class="btn btn-sm{% if not show_all %} btn-primary{% else %} btn-outline-primary{% endif %} me-2">Active tasks</a>
+    <div class="d-flex flex-column flex-sm-row justify-content-end mb-3 gap-2">
+      <a href="?period={{ period|urlencode }}&show=active" class="btn btn-sm{% if not show_all %} btn-primary{% else %} btn-outline-primary{% endif %}">Active tasks</a>
       <a href="?period={{ period|urlencode }}&show=all" class="btn btn-sm{% if show_all %} btn-primary{% else %} btn-outline-primary{% endif %}">All tasks</a>
     </div>
     <!-- Table -->
@@ -45,14 +45,14 @@
         <tbody>
         {% for usertask in usertasks %}
           <tr>
-            <td>{{ usertask.name }}</td>
+            <td class="text-break">{{ usertask.name }}</td>
             <td><span class="task-time" data-seconds="{{ usertask.timer|default:0 }}">00:00:00</span></td>
             <td>
               {% if not usertask.to_show %}
                 <form action="{% url 'basic_app:reports' %}" method="POST" class="d-inline">{% csrf_token %}
                   <input type="hidden" name="name" value="{{ usertask.name }}">
                   <input type="hidden" name="to_show" value="{{ usertask.to_show }}">
-                  <button type="submit" class="btn btn-outline-danger btn-sm">Return task</button>
+                  <button type="submit" class="btn btn-outline-danger btn-sm w-100 w-sm-auto">Return task</button>
                 </form>
               {% endif %}
             </td>
@@ -62,19 +62,23 @@
       </table>
     </div>
     <!-- Chart.js canvas -->
-    <div class="mt-4">
-      <canvas id="reportChart" height="80"></canvas>
+    <div class="mt-4" style="position: relative; height: 300px; max-height: 400px;">
+      <canvas id="reportChart"></canvas>
     </div>
   </div>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
-  // Format seconds to HH:MM:SS
+  // Format seconds to HH:MM (minutes instead of seconds)
   function formatTime(sec) {
     let h = Math.floor(sec/3600);
     let m = Math.floor((sec%3600)/60);
-    let s = sec%60;
-    return `${h.toString().padStart(2,'0')}:${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}`;
+    return `${h.toString().padStart(2,'0')}:${m.toString().padStart(2,'0')}`;
+  }
+  
+  // Format seconds to minutes for chart display
+  function formatMinutes(sec) {
+    return Math.floor(sec / 60);
   }
   // Update times in table
   let total = 0;
@@ -94,8 +98,8 @@
     data: {
       labels: Array.from(document.querySelectorAll('.task-time')).map((_,i) => `Task ${i+1}`),
       datasets: [{
-        label: 'Time (seconds)',
-        data: Array.from(document.querySelectorAll('.task-time')).map(el => parseInt(el.dataset.seconds, 10)),
+        label: 'Time (minutes)',
+        data: Array.from(document.querySelectorAll('.task-time')).map(el => formatMinutes(parseInt(el.dataset.seconds, 10))),
         backgroundColor: 'rgba(13,110,253,0.5)',
         borderColor: 'rgba(13,110,253,1)',
         borderWidth: 1
@@ -103,9 +107,96 @@
     },
     options: {
       responsive: true,
-      plugins: { legend: { display: false } },
-      scales: { y: { beginAtZero: true } }
+      maintainAspectRatio: true,
+      plugins: { 
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: function(context) {
+              let minutes = context.parsed.y;
+              let hours = Math.floor(minutes / 60);
+              let mins = minutes % 60;
+              return hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
+            }
+          }
+        }
+      },
+      scales: { 
+        y: { 
+          beginAtZero: true,
+          title: {
+            display: true,
+            text: 'Time (minutes)'
+          },
+          ticks: {
+            maxTicksLimit: 8
+          }
+        },
+        x: {
+          ticks: {
+            maxRotation: 45,
+            minRotation: 0
+          }
+        }
+        x: {
+          ticks: {
+            maxRotation: 45,
+            minRotation: 0
+          }
+        }
+      }
     }
   });
 </script>
+
+<style>
+  /* Mobile responsive styles for reports page */
+  @media (max-width: 768px) {
+    .card-header {
+      flex-direction: column;
+      align-items: flex-start !important;
+      gap: 0.5rem;
+    }
+    
+    .card-header h4 {
+      font-size: 1.25rem;
+    }
+    
+    .table {
+      font-size: 0.9rem;
+    }
+    
+    .table th,
+    .table td {
+      padding: 0.5rem 0.25rem;
+    }
+    
+    .btn-sm {
+      font-size: 0.8rem;
+      padding: 0.25rem 0.5rem;
+    }
+  }
+  
+  @media (max-width: 576px) {
+    .card-body {
+      padding: 1rem !important;
+    }
+    
+    .table {
+      font-size: 0.85rem;
+    }
+    
+    .fs-5 {
+      font-size: 1rem !important;
+    }
+    
+    .fs-4 {
+      font-size: 1.25rem !important;
+    }
+    
+    #reportChart {
+      max-height: 250px !important;
+    }
+  }
+</style>
 {% endblock %}
