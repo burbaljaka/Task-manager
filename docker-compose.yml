@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  web:
+    build: .
+    container_name: task_manager_web
+    volumes:
+      # Mount the database file to persist data
+      - ./learning_users/db.sqlite3:/app/db.sqlite3
+      # Mount media directory for user uploads (profile pictures)
+      - ./learning_users/media:/app/media
+      # Mount static files for development (optional, can be removed in production)
+      - ./learning_users/static:/app/static
+    ports:
+      - "8000:8000"
+    environment:
+      - DEBUG=True
+      - PYTHONUNBUFFERED=1
