@@ -5,14 +5,17 @@ services:
     build: .
     container_name: task_manager_web
     volumes:
-      # Mount the database file to persist data
-      - ./learning_users/db.sqlite3:/app/db.sqlite3
+      # Mount data directory for database persistence
+      - ./learning_users/data:/app/data
       # Mount media directory for user uploads (profile pictures)
       - ./learning_users/media:/app/media
       # Mount static files for development (optional, can be removed in production)
       - ./learning_users/static:/app/static
+    # Ensure the database file exists before mounting
+    init: true
     ports:
       - "8000:8000"
     environment:
       - DEBUG=True
       - PYTHONUNBUFFERED=1
+      - DATA_DIR=/app/data

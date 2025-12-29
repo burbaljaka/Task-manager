@@ -22,15 +22,16 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy project
 COPY learning_users/ /app/
 
-# Create directories for media and static files
-RUN mkdir -p /app/media /app/static
+# Create directories for data, media and static files
+RUN mkdir -p /app/data /app/media /app/static
 
-# Collect static files
-RUN python manage.py collectstatic --noinput || true
+# Copy entrypoint script
+COPY docker-entrypoint.sh /app/
+RUN chmod +x /app/docker-entrypoint.sh
 
 # Expose port
 EXPOSE 8000
 
-# Run migrations and start server
-CMD ["sh", "-c", "python manage.py migrate && python manage.py runserver 0.0.0.0:8000"]
+# Use entrypoint script
+ENTRYPOINT ["/app/docker-entrypoint.sh"]
 

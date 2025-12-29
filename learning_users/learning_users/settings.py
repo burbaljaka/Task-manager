@@ -77,10 +77,16 @@ WSGI_APPLICATION = 'learning_users.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/1.10/ref/settings/#databases
 
+# Use data directory for database if DATA_DIR env var is set (Docker), otherwise use BASE_DIR
+# This allows the database to be created in /app/data in Docker, or in BASE_DIR locally
+DATA_DIR = os.environ.get('DATA_DIR', BASE_DIR)
+if not os.path.exists(DATA_DIR):
+    os.makedirs(DATA_DIR, exist_ok=True)
+
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': os.path.join(BASE_DIR, 'db.sqlite3'),
+        'NAME': os.path.join(DATA_DIR, 'db.sqlite3'),
     }
 }
 

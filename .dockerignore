@@ -1,0 +1,64 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Django
+*.log
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+
+# Data directory (will be mounted as volume)
+learning_users/data/
+
+# Media files (will be mounted as volume)
+media/
+
+# Documentation
+*.md
+!README.md
+
+# Git
+.git/
+.gitignore
+
+# Docker
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# Other shell scripts (but keep docker-entrypoint.sh)
+*.sh
+!docker-entrypoint.sh
+tasks.md
+progress.md
+projectbrief.md
+activeContext.md
+IMPLEMENTATION_PLAN.md
+IMPLEMENTATION_STATUS.md
+UI_UX_DESIGN.md
+
