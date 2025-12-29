@@ -314,6 +314,8 @@ def user_tasks_view(request):
                     userform.save()
         else:
             print('Form errors:', form.errors)
+            print('POST data:', request.POST)
+            print('Form data:', form.data)
 
     # Rebuild hierarchy after potential changes (excluding completed tasks)
     parent_tasks = get_task_hierarchy(current_user_id, exclude_completed=True)

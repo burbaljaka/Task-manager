@@ -1,7 +1,7 @@
 {% extends "basic_app/base.html" %}
 
 {% block body_block %}
-<label id="counter" style="display:none">{{ counter }}</label>
+  <label id="counter" style="display:none">{{ counter }}</label>
 
 <!-- Active Tasks Section -->
 <div class="tasks-section mb-4">
@@ -13,7 +13,7 @@
   {% empty %}
     <p class="text-muted">No active tasks. Create a new task to get started!</p>
   {% endfor %}
-</div>
+        </div>
 
 <!-- Completed Tasks Section -->
 {% if completed_tasks %}
@@ -29,12 +29,12 @@
 </div>
 {% endif %}
 
-<br>
+  <br>
 
-<button type="button" id="create_button" onclick="create_new_task()" class="btn btn-outline-success btn-sm rounded-pill mb-3" style="display:block;">Создать задачу</button>
+  <button type="button" id="create_button" onclick="create_new_task()" class="btn btn-outline-success btn-sm rounded-pill mb-3" style="display:block;">Создать задачу</button>
 
-<form action="{% url 'basic_app:user_tasks_view' %}" method="POST" style="display:none" id="create_new_task_form" autocomplete="off">
-  {% csrf_token %}
+  <form action="{% url 'basic_app:user_tasks_view' %}" method="POST" style="display:none" id="create_new_task_form" autocomplete="off" onsubmit="return validateNewTaskForm(event)">
+    {% csrf_token %}
   <div class="card shadow-sm mb-3 border-0 bg-white">
     <div class="card-body p-3">
       <div class="task-metadata-bar mb-2">
@@ -51,7 +51,7 @@
         <input type="date" name="due_date" id="new_task_due_date" class="form-control form-control-sm d-inline-block" style="width:auto;">
         <input type="number" name="priority" id="new_task_priority" value="2" min="1" max="4" style="display:none">
       </div>
-      <input type="text" name="name" id="new_task_name" value="" placeholder="Введите имя задачи" class="form-control form-control-sm rounded-pill bg-white border-0 fw-semibold px-2 py-1 mb-1" style="max-width:200px; min-width:120px; box-shadow:0 1px 4px rgba(74,111,165,0.05); font-size: 0.9rem;">
+      <input type="text" name="name" id="new_task_name" value="" placeholder="Введите имя задачи" required class="form-control form-control-sm rounded-pill bg-white border-0 fw-semibold px-2 py-1 mb-1" style="max-width:200px; min-width:120px; box-shadow:0 1px 4px rgba(74,111,165,0.05); font-size: 0.9rem;">
       <input type="text" name="timer" value="0" style="display:none">
       <input type="text" name="id" value="0" style="display:none">
       <input type="text" name="fordelete" value="No" style="display:none">
@@ -63,11 +63,11 @@
       <input type="submit" name="task_button" value="Сохранить" class="btn btn-outline-success btn-sm rounded-pill mt-1">
     </div>
   </div>
-</form>
+  </form>
 
-<button type="button" id="cancel_create_button" style="display:none" onclick="create_new_task()" class="btn btn-outline-secondary btn-sm rounded-pill mt-2">Отмена</button>
+  <button type="button" id="cancel_create_button" style="display:none" onclick="create_new_task()" class="btn btn-outline-secondary btn-sm rounded-pill mt-2">Отмена</button>
 
-<style>
+  <style>
   /* Task Card Styles */
   .task-card {
     background: white;
@@ -382,23 +382,23 @@
   }
 
   /* Running Task */
-  .running-task {
-    background: linear-gradient(90deg, #e0f7fa 0%, #e3f0ff 100%) !important;
-    box-shadow: 0 0 0 2px #4fd1c5 inset, 0 2px 8px rgba(60,120,180,0.07);
-    transition: background 0.3s;
-  }
+    .running-task {
+      background: linear-gradient(90deg, #e0f7fa 0%, #e3f0ff 100%) !important;
+      box-shadow: 0 0 0 2px #4fd1c5 inset, 0 2px 8px rgba(60,120,180,0.07);
+      transition: background 0.3s;
+    }
 
-  .stop-btn {
-    color: #fff;
-    background: linear-gradient(90deg, #ff7eb3 0%, #ff758c 100%);
-    border: none;
-    transition: background 0.18s, color 0.18s;
-  }
+    .stop-btn {
+      color: #fff;
+      background: linear-gradient(90deg, #ff7eb3 0%, #ff758c 100%);
+      border: none;
+      transition: background 0.18s, color 0.18s;
+    }
 
-  .stop-btn:hover, .stop-btn:focus {
-    background: #e63946;
-    color: #fff;
-  }
+    .stop-btn:hover, .stop-btn:focus {
+      background: #e63946;
+      color: #fff;
+    }
 
   /* Responsive */
   @media (max-width: 768px) {
@@ -522,10 +522,10 @@
     .task-timer-section .small {
       font-size: 0.75rem !important;
     }
-  }
-</style>
+    }
+  </style>
 
-<script type="text/javascript">
+  <script type="text/javascript">
   function pad(val) { return val > 9 ? val : "0" + val; }
 
   document.addEventListener('DOMContentLoaded', function() {
@@ -865,6 +865,22 @@
     }
   }
 
+  function validateNewTaskForm(event) {
+    var nameField = document.getElementById("new_task_name");
+    var nameValue = nameField ? nameField.value.trim() : "";
+    
+    if (!nameValue) {
+      event.preventDefault();
+      alert("Please enter a task name.");
+      if (nameField) {
+        nameField.focus();
+      }
+      return false;
+    }
+    
+    return true;
+  }
+
   function create_new_task(parentTaskId, parentTaskName) {
     var createBtn = document.getElementById("create_button");
     var createForm = document.getElementById("create_new_task_form");
@@ -889,6 +905,14 @@
       createBtn.style.display = "none";
       createForm.style.display = "block";
       cancelBtn.style.display = "block";
+      
+      // Focus on name field after showing form
+      setTimeout(function() {
+        var nameField = document.getElementById("new_task_name");
+        if (nameField) {
+          nameField.focus();
+        }
+      }, 100);
       
       // Scroll to form
       createForm.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -936,5 +960,5 @@
       }
     }
   }
-</script>
+  </script>
 {% endblock %}

@@ -46,6 +46,7 @@ class UserProfileInfoForm(forms.ModelForm):
 class UserTaskForm(forms.ModelForm):
     id = forms.IntegerField(required=False)
     fordelete = forms.CharField(required=False)
+    name = forms.CharField(required=False, max_length=30)  # Make name optional, we'll validate in clean()
     parent_task = forms.ModelChoiceField(
         queryset=UserTask.objects.none(),
         required=False,
@@ -85,6 +86,12 @@ class UserTaskForm(forms.ModelForm):
         cleaned_data = super().clean()
         parent_task = cleaned_data.get('parent_task')
         task_id = cleaned_data.get('id')
+        
+        # Validate name field - required for new tasks
+        name = cleaned_data.get('name', '').strip() if cleaned_data.get('name') else ''
+        if (not task_id or task_id == 0) and not name:
+            # New task - name is required
+            raise ValidationError({'name': 'Task name is required.'})
         
         if parent_task and task_id:
             # Get the task instance if it exists
