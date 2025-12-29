@@ -154,7 +154,7 @@ def get_task_hierarchy(user_id, exclude_completed=True):
     if exclude_completed:
         query = query.exclude(status='COMPLETED')
     
-    all_tasks = list(query.prefetch_related('subtasks').select_related('parent_task'))
+    all_tasks = list(query.select_related('parent_task'))
     
     # Create a dictionary to map task IDs to task objects for quick lookup
     task_dict = {task.id: task for task in all_tasks}
@@ -173,7 +173,11 @@ def get_task_hierarchy(user_id, exclude_completed=True):
             parent_tasks.append(task)
         else:
             # This is a subtask, add it to its parent's subtasks_list
+            # Only add if parent is in task_dict AND exclude_completed filter allows it
             if parent_id in task_dict:
+                # Double-check: if exclude_completed is True, make sure subtask is not completed
+                if exclude_completed and task.status == 'COMPLETED':
+                    continue  # Skip completed subtasks
                 parent_task = task_dict[parent_id]
                 parent_task.subtasks_list.append(task)
             else:
@@ -323,12 +327,34 @@ def user_tasks_view(request):
     # Get completed tasks from the last week
     today = datetime.date.today()
     week_ago = today - datetime.timedelta(days=7)
-    completed_tasks_all = get_task_hierarchy(current_user_id, exclude_completed=False)
+    # Get all completed tasks directly from database (not using hierarchy to avoid filtering issues)
+    completed_tasks_query = UserTask.objects.filter(
+        user_id=current_user_id,
+        to_show=1,
+        status='COMPLETED'
+    ).select_related('parent_task')
+    
     # Filter to only completed tasks from last week
     completed_tasks_last_week = []
-    for task in completed_tasks_all:
-        if task.status == 'COMPLETED' and task.completion_date and task.completion_date >= week_ago:
-            completed_tasks_last_week.append(task)
+    for task in completed_tasks_query:
+        # Check if completion_date exists and is within last week
+        if task.completion_date and task.completion_date >= week_ago:
+            # Only include top-level tasks (no parent) or include all if needed
+            if not task.parent_task_id:
+                completed_tasks_last_week.append(task)
+    
+    # Also include completed subtasks if their parent is not completed (orphaned completed subtasks)
+    # This ensures we show completed subtasks even if parent is not completed
+    for task in completed_tasks_query:
+        if task.completion_date and task.completion_date >= week_ago:
+            if task.parent_task_id:
+                # Check if parent is also completed - if not, include this subtask
+                try:
+                    parent = UserTask.objects.get(pk=task.parent_task_id)
+                    if parent.status != 'COMPLETED':
+                        completed_tasks_last_week.append(task)
+                except UserTask.DoesNotExist:
+                    pass
     
     # Calculate today's time for all tasks (including subtasks)
     all_tasks_flat = UserTask.objects.filter(user_id=current_user_id, to_show=1).exclude(status='COMPLETED')

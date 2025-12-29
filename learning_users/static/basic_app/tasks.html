@@ -16,18 +16,20 @@
         </div>
 
 <!-- Completed Tasks Section -->
-{% if completed_tasks %}
 <div class="completed-tasks-section mb-4">
   <h3 class="mb-3" style="color: #6c757d; font-size: 1.25rem; font-weight: 600; border-top: 2px solid #e9ecef; padding-top: 1.5rem;">
     Completed (Last Week)
   </h3>
-  {% for usertask in completed_tasks %}
-    {% with task=usertask level=0 %}
-      {% include "basic_app/_task_item.html" %}
-    {% endwith %}
-  {% endfor %}
-</div>
-{% endif %}
+  {% if completed_tasks %}
+    {% for usertask in completed_tasks %}
+      {% with task=usertask level=0 %}
+        {% include "basic_app/_task_item.html" %}
+      {% endwith %}
+    {% endfor %}
+  {% else %}
+    <p class="text-muted">No tasks completed in the last week.</p>
+  {% endif %}
+        </div>
 
   <br>
 
