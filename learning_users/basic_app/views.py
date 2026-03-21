@@ -1,5 +1,5 @@
 from collections.abc import Iterator
-from django.shortcuts import render
+from django.shortcuts import get_object_or_404, render
 from basic_app.forms import UserForm, UserProfileInfoForm, UserTaskForm, StartTaskForm, StopTaskForm, ReturnTaskForm
 from .models import UserTask, PartTask
 from django.utils.timezone import localtime, now
@@ -502,6 +502,12 @@ def user_tasks_view(request):
         "today": today,
     }
     return render(request, "basic_app/tasks.html", context)
+
+
+@login_required
+def task_detail_view(request, task_id: int):
+    task = get_object_or_404(UserTask, pk=task_id, user=request.user)
+    return render(request, "basic_app/task_detail.html", {"task": task})
 
 
 def reports(request):

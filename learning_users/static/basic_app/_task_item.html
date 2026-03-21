@@ -12,6 +12,11 @@
       
       <!-- Metadata Bar -->
       <div class="task-metadata-bar">
+        <a href="{% url 'basic_app:task_detail' task.id %}"
+           target="_blank"
+           rel="noopener noreferrer"
+           class="task-ref-badge"
+           title="Открыть задачу #{{ task.id }}">#{{ task.id }}</a>
         <!-- Priority Stars -->
         <span class="priority-stars priority-{{ task.get_priority_display_name|lower }}" title="{{ task.get_priority_display_name }} Priority">
           {% if task.priority >= 1 %}<span class="priority-star">★</span>{% else %}<span class="priority-star">☆</span>{% endif %}

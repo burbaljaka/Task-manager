@@ -1,5 +1,6 @@
 import datetime
 
+from django.conf import settings
 from django.contrib.auth.models import User
 from django.test import Client, TestCase
 from django.urls import reverse
@@ -97,3 +98,52 @@ class UserTasksKanbanViewTests(TestCase):
             1,
             "Subtask must appear exactly once (column card only; not nested under parent).",
         )
+
+    def test_kanban_task_card_has_task_detail_link_with_target_blank(self):
+        task = UserTask.objects.create(user=self.user, name="Linkable", status="TODO")
+        response = self.client.get(reverse("basic_app:user_tasks_view"))
+        self.assertEqual(response.status_code, 200)
+        html = response.content.decode()
+        detail_url = reverse("basic_app:task_detail", kwargs={"task_id": task.id})
+        self.assertIn(detail_url, html)
+        self.assertIn(f'href="{detail_url}"', html)
+        self.assertIn('target="_blank"', html)
+        self.assertIn('rel="noopener noreferrer"', html)
+        self.assertIn(f"#{task.id}", html)
+
+
+class TaskDetailViewTests(TestCase):
+    def setUp(self):
+        self.client = Client()
+        self.owner = User.objects.create_user(username="owner", password="pass12345")
+        self.other = User.objects.create_user(username="other", password="pass12345")
+        self.task = UserTask.objects.create(
+            user=self.owner,
+            name="My task",
+            status="IN_PROGRESS",
+            comment="Note",
+        )
+
+    def test_owner_gets_200_and_sees_task_fields(self):
+        self.client.login(username="owner", password="pass12345")
+        url = reverse("basic_app:task_detail", kwargs={"task_id": self.task.id})
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["task"].id, self.task.id)
+        html = response.content.decode()
+        self.assertIn(f"#{self.task.id}", html)
+        self.assertIn("My task", html)
+        self.assertIn("IN_PROGRESS", html)
+        self.assertIn("Note", html)
+
+    def test_other_user_gets_404(self):
+        self.client.login(username="other", password="pass12345")
+        url = reverse("basic_app:task_detail", kwargs={"task_id": self.task.id})
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, 404)
+
+    def test_anonymous_user_redirects_to_login(self):
+        url = reverse("basic_app:task_detail", kwargs={"task_id": self.task.id})
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(response.url.startswith(settings.LOGIN_URL))
