@@ -3,17 +3,36 @@
 {% block body_block %}
   <label id="counter" style="display:none">{{ counter }}</label>
 
-<!-- Active Tasks Section -->
+<!-- Active Tasks Section (Kanban) -->
 <div class="tasks-section mb-4">
   <h3 class="mb-3" style="color: #4a6fa5; font-size: 1.25rem; font-weight: 600;">Active Tasks</h3>
-  {% for usertask in usertasks %}
-    {% with task=usertask level=0 %}
-      {% include "basic_app/_task_item.html" %}
-    {% endwith %}
-  {% empty %}
-    <p class="text-muted">No active tasks. Create a new task to get started!</p>
-  {% endfor %}
+  <p class="text-muted small mb-3">Organized by status — change status using each card&apos;s controls; drag-and-drop between columns is not available yet.</p>
+  <div class="kanban-board">
+    {% for column in kanban_columns %}
+      <div class="kanban-column" data-kanban-status="{{ column.status }}">
+        <div class="kanban-column-header">
+          <span class="kanban-column-title">{{ column.label }}</span>
+          <span class="kanban-column-count badge bg-secondary">{{ column.tasks|length }}</span>
         </div>
+        <div class="kanban-column-body">
+          {% for task in column.tasks %}
+            {% if task.parent_task_id %}
+              {% with level=1 %}
+                {% include "basic_app/_task_item.html" %}
+              {% endwith %}
+            {% else %}
+              {% with level=0 %}
+                {% include "basic_app/_task_item.html" %}
+              {% endwith %}
+            {% endif %}
+          {% empty %}
+            <p class="text-muted small mb-0 kanban-empty-placeholder">No tasks</p>
+          {% endfor %}
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+</div>
 
 <!-- Completed Tasks Section -->
 <div class="completed-tasks-section mb-4">
@@ -70,6 +89,58 @@
   <button type="button" id="cancel_create_button" style="display:none" onclick="create_new_task()" class="btn btn-outline-secondary btn-sm rounded-pill mt-2">Отмена</button>
 
   <style>
+  /* Kanban board */
+  .kanban-board {
+    display: flex;
+    gap: 0.75rem;
+    align-items: flex-start;
+    overflow-x: auto;
+    padding-bottom: 0.25rem;
+  }
+
+  .kanban-column {
+    flex: 0 0 260px;
+    min-width: 200px;
+    background: #f8f9fa;
+    border-radius: 0.5rem;
+    border: 1px solid #dee2e6;
+  }
+
+  .kanban-column-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    border-bottom: 1px solid #dee2e6;
+    font-weight: 600;
+    font-size: 0.9rem;
+    color: #495057;
+    background: #fff;
+    border-radius: 0.5rem 0.5rem 0 0;
+  }
+
+  .kanban-column-title {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .kanban-column-count {
+    font-size: 0.75rem;
+    font-weight: 600;
+  }
+
+  .kanban-column-body {
+    max-height: 65vh;
+    overflow-y: auto;
+    padding: 0.5rem;
+  }
+
+  .kanban-empty-placeholder {
+    padding: 0.5rem 0;
+    margin: 0;
+  }
+
   /* Task Card Styles */
   .task-card {
     background: white;
@@ -536,7 +607,20 @@
 
   function initializeTasks() {
     var counter = parseInt(document.getElementById("counter").innerText, 10);
-    if (counter != 0) {
+    var boardCards = document.querySelectorAll('.kanban-board .task-card[data-task-id]');
+    var nonCompletedOnBoard = 0;
+    boardCards.forEach(function(card) {
+      var st = card.getAttribute('data-task-status');
+      if (st !== 'COMPLETED') {
+        nonCompletedOnBoard++;
+      }
+    });
+    if (counter !== 0 && nonCompletedOnBoard !== counter) {
+      if (typeof console !== 'undefined' && console.warn) {
+        console.warn('Kanban board non-completed count mismatch: counter=' + counter + ' boardNonCompleted=' + nonCompletedOnBoard);
+      }
+    }
+    if (counter !== 0 || boardCards.length > 0) {
       // Build parent-child map first
       buildParentChildMap();
       
@@ -559,6 +643,7 @@
       });
     }
   }
+
 
   function updateTimerDisplay(taskId, seconds) {
     var hoursEl = document.getElementById("hours-" + taskId);

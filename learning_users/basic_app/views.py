@@ -1,3 +1,4 @@
+from collections.abc import Iterator
 from django.shortcuts import render
 from basic_app.forms import UserForm, UserProfileInfoForm, UserTaskForm, StartTaskForm, StopTaskForm, ReturnTaskForm
 from .models import UserTask, PartTask
@@ -15,6 +16,30 @@ from django.utils import timezone
 from dateutil import relativedelta as monthdelta
 from calendar import monthrange
 import requests
+
+
+KANBAN_COLUMN_SPECS: tuple[tuple[str, str], ...] = (
+    ("TODO", "To Do"),
+    ("IN_PROGRESS", "In Progress"),
+    ("COMPLETED", "Done"),
+    ("CANCELLED", "Cancelled"),
+)
+
+
+def iter_all_tasks_in_tree(parent_tasks: list) -> Iterator[UserTask]:
+    """Depth-first traversal of task hierarchy; yields each node once."""
+    for task in parent_tasks:
+        yield task
+        subtasks = getattr(task, "subtasks_list", None) or []
+        if subtasks:
+            yield from iter_all_tasks_in_tree(subtasks)
+
+
+def sort_tasks_for_kanban_column(tasks: list[UserTask]) -> list[UserTask]:
+    return sorted(
+        tasks,
+        key=lambda t: (t.due_date is None, t.due_date or datetime.date.min, t.id),
+    )
 
 
 def index(request):
@@ -415,18 +440,68 @@ def user_tasks_view(request):
     
     for task in parent_tasks:
         add_today_time_and_helpers(task)
-    
+
+    tree_ids = {t.id for t in iter_all_tasks_in_tree(parent_tasks)}
+    non_completed_flat = list(
+        UserTask.objects.filter(user_id=current_user_id, to_show=1)
+        .exclude(status="COMPLETED")
+        .select_related("parent_task")
+    )
+    orphans: list[UserTask] = []
+    for task in non_completed_flat:
+        if task.id not in tree_ids:
+            task.subtasks_list = []
+            add_today_time_and_helpers(task)
+            orphans.append(task)
+
+    non_completed_by_status: dict[str, list[UserTask]] = {
+        "TODO": [],
+        "IN_PROGRESS": [],
+        "CANCELLED": [],
+    }
+    for task in list(iter_all_tasks_in_tree(parent_tasks)) + orphans:
+        if task.status in non_completed_by_status:
+            non_completed_by_status[task.status].append(task)
+
+    completed_for_done = list(
+        UserTask.objects.filter(
+            user_id=current_user_id,
+            to_show=1,
+            status="COMPLETED",
+        ).select_related("parent_task")
+    )
+    for task in completed_for_done:
+        task.subtasks_list = []
+        add_today_time_and_helpers(task)
+
+    kanban_columns: list[dict] = []
+    for status, label in KANBAN_COLUMN_SPECS:
+        if status == "COMPLETED":
+            column_tasks = sort_tasks_for_kanban_column(completed_for_done)
+        else:
+            column_tasks = sort_tasks_for_kanban_column(
+                non_completed_by_status.get(status, [])
+            )
+        # Board uses status-first flat cards; strip hierarchy so _task_item does not
+        # render nested subtasks (they are already their own column cards).
+        for t in column_tasks:
+            t.subtasks_list = []
+        kanban_columns.append(
+            {"status": status, "label": label, "tasks": column_tasks}
+        )
+
     # Process completed tasks for display (add time helpers)
     for task in completed_tasks_last_week:
         add_today_time_and_helpers(task)
-    
+
     context = {
-        'usertasks': parent_tasks,
-        'completed_tasks': completed_tasks_last_week,
-        'counter': len(all_tasks_flat),
-        'today': today
+        "usertasks": [],
+        "kanban_columns": kanban_columns,
+        "completed_tasks": completed_tasks_last_week,
+        "counter": len(all_tasks_flat),
+        "today": today,
     }
-    return render(request, 'basic_app/tasks.html', context)
+    return render(request, "basic_app/tasks.html", context)
 
 
 def reports(request):
