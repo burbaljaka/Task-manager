@@ -100,7 +100,14 @@
         </div>
       </div>
     </nav>
-    <div class="container">
+    <div class="{% block main_container_class %}container{% endblock %}">
+      {% if messages %}
+        {% for message in messages %}
+          <div class="alert alert-{% if message.tags == 'error' %}danger{% elif message.tags == 'debug' %}secondary{% else %}{{ message.tags }}{% endif %} mb-3" role="alert">
+            {{ message }}
+          </div>
+        {% endfor %}
+      {% endif %}
       {% block body_block %}{% endblock %}
     </div>
   </body>

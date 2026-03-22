@@ -8,7 +8,7 @@
   <h1 class="h3 mb-3"><span class="text-muted">#{{ task.id }}</span> {{ task.name }}</h1>
   <dl class="row mb-0">
     <dt class="col-sm-3">Status</dt>
-    <dd class="col-sm-9">{{ task.status }}</dd>
+    <dd class="col-sm-9">{{ task.get_status_label }}</dd>
     <dt class="col-sm-3">Priority</dt>
     <dd class="col-sm-9">{{ task.get_priority_display_name }}</dd>
     {% if task.due_date %}

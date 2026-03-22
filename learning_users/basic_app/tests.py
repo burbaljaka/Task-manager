@@ -2,25 +2,30 @@ import datetime
 
 from django.conf import settings
 from django.contrib.auth.models import User
+from django.forms.models import model_to_dict
 from django.test import Client, TestCase
 from django.urls import reverse
 
-from basic_app.models import UserTask
+from basic_app.kanban_utils import BUILTIN_ORDER_KEYS, ensure_kanban_builtins, status_css_slug
+from basic_app.admin import UserTaskAdminForm
+from basic_app.models import KanbanColumnDefinition, UserTask
 from basic_app.views import (
-    KANBAN_COLUMN_SPECS,
     iter_all_tasks_in_tree,
     sort_tasks_for_kanban_column,
 )
 
 
 class KanbanHelpersTests(TestCase):
-    def test_kanban_column_specs_order_and_length(self):
-        statuses = [s for s, _ in KANBAN_COLUMN_SPECS]
+    def test_builtin_order_keys(self):
         self.assertEqual(
-            statuses,
+            list(BUILTIN_ORDER_KEYS),
             ["TODO", "IN_PROGRESS", "COMPLETED", "CANCELLED"],
         )
-        self.assertEqual(len(KANBAN_COLUMN_SPECS), 4)
+        self.assertEqual(len(BUILTIN_ORDER_KEYS), 4)
+
+    def test_status_css_slug_matches_slug_rules(self):
+        self.assertEqual(status_css_slug("IN_PROGRESS"), "in-progress")
+        self.assertEqual(status_css_slug("MY__CUSTOM"), "my-custom")
 
     def test_iter_all_tasks_in_tree_dfs_order(self):
         user = User.objects.create_user(username="u1", password="pass12345")
@@ -49,17 +54,24 @@ class UserTasksKanbanViewTests(TestCase):
         self.user = User.objects.create_user(username="viewer", password="pass12345")
         self.client.login(username="viewer", password="pass12345")
 
+    def test_anonymous_get_tasks_redirects_to_login(self):
+        anon = Client()
+        response = anon.get(reverse("basic_app:user_tasks_view"))
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(response.url.startswith(settings.LOGIN_URL))
+
     def test_user_tasks_view_has_kanban_columns_shape(self):
         response = self.client.get(reverse("basic_app:user_tasks_view"))
         self.assertEqual(response.status_code, 200)
         kanban_columns = response.context["kanban_columns"]
         self.assertEqual(len(kanban_columns), 4)
-        expected_statuses = [s for s, _ in KANBAN_COLUMN_SPECS]
+        expected_statuses = list(BUILTIN_ORDER_KEYS)
         for i, col in enumerate(kanban_columns):
             self.assertEqual(col["status"], expected_statuses[i])
             self.assertIn("label", col)
             self.assertIn("tasks", col)
             self.assertIsInstance(col["tasks"], list)
+        self.assertEqual(len(response.context["status_options"]), 4)
 
     def test_usertasks_empty_for_board(self):
         response = self.client.get(reverse("basic_app:user_tasks_view"))
@@ -70,7 +82,10 @@ class UserTasksKanbanViewTests(TestCase):
         UserTask.objects.create(user=self.user, name="t2", status="IN_PROGRESS")
         UserTask.objects.create(user=self.user, name="t3", status="CANCELLED")
         UserTask.objects.create(
-            user=self.user, name="t4", status="COMPLETED", completion_date=datetime.date.today()
+            user=self.user,
+            name="t4",
+            status="COMPLETED",
+            completion_date=datetime.date.today(),
         )
         response = self.client.get(reverse("basic_app:user_tasks_view"))
         cols = {c["status"]: c["tasks"] for c in response.context["kanban_columns"]}
@@ -78,6 +93,55 @@ class UserTasksKanbanViewTests(TestCase):
         self.assertEqual(len(cols["IN_PROGRESS"]), 1)
         self.assertEqual(len(cols["CANCELLED"]), 1)
         self.assertEqual(len(cols["COMPLETED"]), 1)
+
+    def test_custom_column_appears_before_cancelled_and_buckets_tasks(self):
+        ensure_kanban_builtins(self.user)
+        KanbanColumnDefinition.objects.create(
+            user=self.user,
+            key="REVIEW",
+            label="Review",
+            sort_order=10,
+            is_builtin=False,
+        )
+        UserTask.objects.create(user=self.user, name="rev", status="REVIEW")
+        UserTask.objects.create(user=self.user, name="can", status="CANCELLED")
+        response = self.client.get(reverse("basic_app:user_tasks_view"))
+        statuses = [c["status"] for c in response.context["kanban_columns"]]
+        self.assertIn("REVIEW", statuses)
+        self.assertEqual(statuses[-1], "CANCELLED")
+        rev_idx = statuses.index("REVIEW")
+        cancel_idx = statuses.index("CANCELLED")
+        self.assertLess(rev_idx, cancel_idx)
+        cols = {c["status"]: c["tasks"] for c in response.context["kanban_columns"]}
+        self.assertEqual(len(cols["REVIEW"]), 1)
+        self.assertEqual(cols["REVIEW"][0].name, "rev")
+
+    def test_orphan_status_column_without_definition(self):
+        ensure_kanban_builtins(self.user)
+        t = UserTask.objects.create(user=self.user, name="orph", status="TODO")
+        UserTask.objects.filter(pk=t.pk).update(status="LEGACY_X")
+        response = self.client.get(reverse("basic_app:user_tasks_view"))
+        statuses = [c["status"] for c in response.context["kanban_columns"]]
+        self.assertIn("LEGACY_X", statuses)
+        label = next(
+            c["label"]
+            for c in response.context["kanban_columns"]
+            if c["status"] == "LEGACY_X"
+        )
+        self.assertEqual(label, "[LEGACY_X]")
+
+    def test_kanban_column_create_adds_column(self):
+        ensure_kanban_builtins(self.user)
+        url = reverse("basic_app:kanban_column_create")
+        response = self.client.post(
+            url,
+            {"label": "QA", "key": ""},
+            follow=False,
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(
+            KanbanColumnDefinition.objects.filter(user=self.user, key="QA").exists()
+        )
 
     def test_kanban_board_does_not_duplicate_subtask_dom_nodes(self):
         parent = UserTask.objects.create(
@@ -112,6 +176,77 @@ class UserTasksKanbanViewTests(TestCase):
         self.assertIn(f"#{task.id}", html)
 
 
+class UserTaskAdminFormTests(TestCase):
+    def setUp(self):
+        self.owner = User.objects.create_user(username="admform", password="pass12345")
+        ensure_kanban_builtins(self.owner)
+
+    def test_status_choices_include_orphan_key_with_bracket_label(self):
+        t = UserTask.objects.create(user=self.owner, name="orph", status="TODO")
+        UserTask.objects.filter(pk=t.pk).update(status="LEGACY_X")
+        t.refresh_from_db()
+        form = UserTaskAdminForm(instance=t)
+        choices = list(form.fields["status"].widget.choices)
+        legacy = [c for c in choices if c[0] == "LEGACY_X"]
+        self.assertEqual(len(legacy), 1)
+        self.assertEqual(legacy[0][1], "[LEGACY_X]")
+
+    def test_clean_status_accepts_orphan_when_not_in_definitions(self):
+        t = UserTask.objects.create(user=self.owner, name="orph2", status="TODO")
+        UserTask.objects.filter(pk=t.pk).update(status="LEGACY_X")
+        t.refresh_from_db()
+        data = model_to_dict(t)
+        data["status"] = "LEGACY_X"
+        form = UserTaskAdminForm(data, instance=t)
+        self.assertTrue(form.is_valid(), form.errors)
+
+
+class KanbanColumnDefinitionAdminTests(TestCase):
+    def setUp(self):
+        self.client = Client()
+        self.owner = User.objects.create_user(username="colowner", password="pass12345")
+        self.superuser = User.objects.create_superuser(
+            username="admin", password="pass12345", email="a@example.com"
+        )
+        ensure_kanban_builtins(self.owner)
+        self.custom = KanbanColumnDefinition.objects.create(
+            user=self.owner,
+            key="EMPTY_COL",
+            label="Empty",
+            sort_order=50,
+            is_builtin=False,
+        )
+
+    def _delete_url(self, pk: int) -> str:
+        return reverse("admin:basic_app_kanbancolumndefinition_delete", args=[pk])
+
+    def test_admin_blocks_delete_builtin_column(self):
+        builtin = KanbanColumnDefinition.objects.get(user=self.owner, key="TODO")
+        self.client.login(username="admin", password="pass12345")
+        response = self.client.post(self._delete_url(builtin.pk), {"post": "yes"})
+        self.assertEqual(response.status_code, 403)
+        self.assertTrue(
+            KanbanColumnDefinition.objects.filter(pk=builtin.pk).exists()
+        )
+
+    def test_admin_blocks_delete_column_referenced_by_task(self):
+        UserTask.objects.create(user=self.owner, name="holds", status="EMPTY_COL")
+        self.client.login(username="admin", password="pass12345")
+        response = self.client.post(self._delete_url(self.custom.pk), {"post": "yes"})
+        self.assertEqual(response.status_code, 403)
+        self.assertTrue(
+            KanbanColumnDefinition.objects.filter(pk=self.custom.pk).exists()
+        )
+
+    def test_admin_allows_delete_unused_custom_column(self):
+        self.client.login(username="admin", password="pass12345")
+        response = self.client.post(self._delete_url(self.custom.pk), {"post": "yes"})
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(
+            KanbanColumnDefinition.objects.filter(pk=self.custom.pk).exists()
+        )
+
+
 class TaskDetailViewTests(TestCase):
     def setUp(self):
         self.client = Client()
@@ -133,7 +268,7 @@ class TaskDetailViewTests(TestCase):
         html = response.content.decode()
         self.assertIn(f"#{self.task.id}", html)
         self.assertIn("My task", html)
-        self.assertIn("IN_PROGRESS", html)
+        self.assertIn("In Progress", html)
         self.assertIn("Note", html)
 
     def test_other_user_gets_404(self):

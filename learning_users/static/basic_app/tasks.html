@@ -1,11 +1,16 @@
 {% extends "basic_app/base.html" %}
 
+{% block main_container_class %}container-fluid px-3{% endblock %}
+
 {% block body_block %}
   <label id="counter" style="display:none">{{ counter }}</label>
 
 <!-- Active Tasks Section (Kanban) -->
 <div class="tasks-section mb-4">
-  <h3 class="mb-3" style="color: #4a6fa5; font-size: 1.25rem; font-weight: 600;">Active Tasks</h3>
+  <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+    <h3 class="mb-0" style="color: #4a6fa5; font-size: 1.25rem; font-weight: 600;">Active Tasks</h3>
+    <button type="button" class="btn btn-outline-primary btn-sm rounded-pill" data-bs-toggle="modal" data-bs-target="#addKanbanColumnModal">+ Add column</button>
+  </div>
   <p class="text-muted small mb-3">Organized by status — change status using each card&apos;s controls; drag-and-drop between columns is not available yet.</p>
   <div class="kanban-board">
     {% for column in kanban_columns %}
@@ -33,6 +38,34 @@
     {% endfor %}
   </div>
 </div>
+
+  <div class="modal fade" id="addKanbanColumnModal" tabindex="-1" aria-labelledby="addKanbanColumnLabel" aria-hidden="true">
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <form action="{% url 'basic_app:kanban_column_create' %}" method="post">
+          {% csrf_token %}
+          <div class="modal-header">
+            <h5 class="modal-title" id="addKanbanColumnLabel">Add column</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
+          <div class="modal-body">
+            <div class="mb-3">
+              <label for="kanban_col_label" class="form-label">Label</label>
+              <input type="text" class="form-control" id="kanban_col_label" name="label" required maxlength="200" placeholder="Column name">
+            </div>
+            <div class="mb-0">
+              <label for="kanban_col_key" class="form-label">Key (optional)</label>
+              <input type="text" class="form-control" id="kanban_col_key" name="key" maxlength="64" placeholder="Leave empty to derive from label">
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+            <button type="submit" class="btn btn-primary">Add column</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
 
 <!-- Completed Tasks Section -->
 <div class="completed-tasks-section mb-4">
@@ -64,10 +97,9 @@
           <span class="priority-star">☆</span><span class="priority-star">☆</span>
         </span>
         <select name="status" id="new_task_status" class="status-badge status-todo form-control form-control-sm d-inline-block" style="width:auto; padding: 0.25rem 0.5rem;">
-          <option value="TODO">TODO</option>
-          <option value="IN_PROGRESS">IN_PROGRESS</option>
-          <option value="COMPLETED">COMPLETED</option>
-          <option value="CANCELLED">CANCELLED</option>
+          {% for opt in status_options %}
+          <option value="{{ opt.key }}">{{ opt.label }}</option>
+          {% endfor %}
         </select>
         <input type="date" name="due_date" id="new_task_due_date" class="form-control form-control-sm d-inline-block" style="width:auto;">
         <input type="number" name="priority" id="new_task_priority" value="2" min="1" max="4" style="display:none">
@@ -92,6 +124,7 @@
   /* Kanban board */
   .kanban-board {
     display: flex;
+    flex-wrap: nowrap;
     gap: 0.75rem;
     align-items: flex-start;
     overflow-x: auto;
@@ -99,8 +132,8 @@
   }
 
   .kanban-column {
-    flex: 0 0 260px;
-    min-width: 200px;
+    flex: 1 0 min(320px, 100%);
+    min-width: 260px;
     background: #f8f9fa;
     border-radius: 0.5rem;
     border: 1px solid #dee2e6;
@@ -131,8 +164,7 @@
   }
 
   .kanban-column-body {
-    max-height: 65vh;
-    overflow-y: auto;
+    overflow-y: visible;
     padding: 0.5rem;
   }
 
@@ -149,6 +181,10 @@
     margin-bottom: 0.5rem;
     box-shadow: 0 1px 3px rgba(0,0,0,0.1);
     border-left: 3px solid #4a6fa5;
+  }
+
+  .task-card--status-unknown {
+    border-left-color: #adb5bd;
   }
 
   .completed-tasks-section .task-card {
@@ -204,8 +240,8 @@
   }
   
   .task-name-section input[name="name"] {
-    max-width: 400px !important;
-    min-width: 200px !important;
+    max-width: 100% !important;
+    min-width: 120px !important;
   }
 
   .task-actions {
@@ -273,6 +309,11 @@
   .status-in-progress { background-color: #0d6efd; color: white; }
   .status-completed { background-color: #198754; color: white; }
   .status-cancelled { background-color: #dc3545; color: white; }
+
+  .status-badge[class*="status-"]:not(.status-todo):not(.status-in-progress):not(.status-completed):not(.status-cancelled) {
+    background-color: #6c757d;
+    color: white;
+  }
 
   /* Due Date Input */
   .due-date-input {
@@ -618,6 +659,22 @@
   <script type="text/javascript">
   function pad(val) { return val > 9 ? val : "0" + val; }
 
+  function statusCssSlug(value) {
+    var s = (value || '').toLowerCase();
+    s = s.replace(/[^a-z0-9]+/g, '-');
+    s = s.replace(/-+/g, '-').replace(/^-|-$/g, '');
+    return s || 'unknown';
+  }
+
+  function stripStatusClasses(el) {
+    if (!el || !el.classList) return;
+    var toRemove = [];
+    el.classList.forEach(function(c) {
+      if (c.indexOf('status-') === 0) toRemove.push(c);
+    });
+    toRemove.forEach(function(c) { el.classList.remove(c); });
+  }
+
   document.addEventListener('DOMContentLoaded', function() {
     initializeTasks();
   });
@@ -797,10 +854,8 @@
     if (fieldName === 'status') {
       var statusSelect = form.querySelector('select[name="status"]');
       if (statusSelect) {
-        // Remove old status classes
-        statusSelect.className = statusSelect.className.replace(/status-\w+/g, '');
-        // Add new status class
-        statusSelect.classList.add('status-badge', 'status-' + fieldValue.toLowerCase());
+        stripStatusClasses(statusSelect);
+        statusSelect.classList.add('status-badge', 'status-' + statusCssSlug(fieldValue));
       }
     }
     

@@ -1,7 +1,16 @@
+from collections import defaultdict
 from collections.abc import Iterator
-from django.shortcuts import get_object_or_404, render
+import re
+from django.contrib import messages
+from django.shortcuts import get_object_or_404, redirect, render
 from basic_app.forms import UserForm, UserProfileInfoForm, UserTaskForm, StartTaskForm, StopTaskForm, ReturnTaskForm
-from .models import UserTask, PartTask
+from basic_app.kanban_utils import (
+    BUILTIN_KEYS,
+    ensure_kanban_builtins,
+    derive_key_from_label,
+    next_custom_sort_order,
+)
+from .models import KanbanColumnDefinition, UserTask, PartTask
 from django.utils.timezone import localtime, now
 # Extra Imports for the Login and Logout Capabilities
 from django.contrib.auth import authenticate, login, logout
@@ -18,14 +27,6 @@ from calendar import monthrange
 import requests
 
 
-KANBAN_COLUMN_SPECS: tuple[tuple[str, str], ...] = (
-    ("TODO", "To Do"),
-    ("IN_PROGRESS", "In Progress"),
-    ("COMPLETED", "Done"),
-    ("CANCELLED", "Cancelled"),
-)
-
-
 def iter_all_tasks_in_tree(parent_tasks: list) -> Iterator[UserTask]:
     """Depth-first traversal of task hierarchy; yields each node once."""
     for task in parent_tasks:
@@ -40,6 +41,51 @@ def sort_tasks_for_kanban_column(tasks: list[UserTask]) -> list[UserTask]:
         tasks,
         key=lambda t: (t.due_date is None, t.due_date or datetime.date.min, t.id),
     )
+
+
+def build_kanban_columns_for_user(
+    user_id: int,
+    parent_tasks: list,
+    orphans: list[UserTask],
+    completed_for_done: list[UserTask],
+) -> list[dict]:
+    """DB-driven column order + orphan columns before CANCELLED; COMPLETED column uses done bucket only."""
+    defs = list(
+        KanbanColumnDefinition.objects.filter(user_id=user_id).order_by("sort_order", "key")
+    )
+    def_keys = {d.key for d in defs}
+    non_completed_by_status: defaultdict[str, list[UserTask]] = defaultdict(list)
+    for task in list(iter_all_tasks_in_tree(parent_tasks)) + orphans:
+        if task.status == "COMPLETED":
+            continue
+        non_completed_by_status[task.status].append(task)
+
+    statuses_in_tasks = set(non_completed_by_status.keys())
+    orphan_keys = sorted(k for k in statuses_in_tasks if k not in def_keys)
+
+    non_cancel = [d for d in defs if d.key != "CANCELLED"]
+    cancel_row = next((d for d in defs if d.key == "CANCELLED"), None)
+
+    merged: list[tuple[str, str]] = []
+    for d in non_cancel:
+        merged.append((d.key, d.label))
+    for ok in orphan_keys:
+        merged.append((ok, f"[{ok}]"))
+    if cancel_row:
+        merged.append((cancel_row.key, cancel_row.label))
+
+    kanban_columns: list[dict] = []
+    for key, label in merged:
+        if key == "COMPLETED":
+            column_tasks = sort_tasks_for_kanban_column(completed_for_done)
+        else:
+            column_tasks = sort_tasks_for_kanban_column(
+                non_completed_by_status.get(key, [])
+            )
+        for t in column_tasks:
+            t.subtasks_list = []
+        kanban_columns.append({"status": key, "label": label, "tasks": column_tasks})
+    return kanban_columns
 
 
 def index(request):
@@ -166,7 +212,6 @@ def update_overdue_priorities(user_id):
         if task.update_priority_if_overdue():
             updated_count += 1
     return updated_count
-    return updated_count
 
 
 def get_task_hierarchy(user_id, exclude_completed=True):
@@ -213,9 +258,11 @@ def get_task_hierarchy(user_id, exclude_completed=True):
     return parent_tasks
 
 
+@login_required
 def user_tasks_view(request):
     current_user_id = request.user.id
-    
+    ensure_kanban_builtins(request.user)
+
     # Update overdue priorities
     update_overdue_priorities(current_user_id)
     
@@ -454,15 +501,6 @@ def user_tasks_view(request):
             add_today_time_and_helpers(task)
             orphans.append(task)
 
-    non_completed_by_status: dict[str, list[UserTask]] = {
-        "TODO": [],
-        "IN_PROGRESS": [],
-        "CANCELLED": [],
-    }
-    for task in list(iter_all_tasks_in_tree(parent_tasks)) + orphans:
-        if task.status in non_completed_by_status:
-            non_completed_by_status[task.status].append(task)
-
     completed_for_done = list(
         UserTask.objects.filter(
             user_id=current_user_id,
@@ -474,21 +512,19 @@ def user_tasks_view(request):
         task.subtasks_list = []
         add_today_time_and_helpers(task)
 
-    kanban_columns: list[dict] = []
-    for status, label in KANBAN_COLUMN_SPECS:
-        if status == "COMPLETED":
-            column_tasks = sort_tasks_for_kanban_column(completed_for_done)
-        else:
-            column_tasks = sort_tasks_for_kanban_column(
-                non_completed_by_status.get(status, [])
-            )
-        # Board uses status-first flat cards; strip hierarchy so _task_item does not
-        # render nested subtasks (they are already their own column cards).
-        for t in column_tasks:
-            t.subtasks_list = []
-        kanban_columns.append(
-            {"status": status, "label": label, "tasks": column_tasks}
+    kanban_columns = build_kanban_columns_for_user(
+        current_user_id,
+        parent_tasks,
+        orphans,
+        completed_for_done,
+    )
+
+    status_options = [
+        {"key": d.key, "label": d.label}
+        for d in KanbanColumnDefinition.objects.filter(user_id=current_user_id).order_by(
+            "sort_order", "key"
         )
+    ]
 
     # Process completed tasks for display (add time helpers)
     for task in completed_tasks_last_week:
@@ -500,8 +536,46 @@ def user_tasks_view(request):
         "completed_tasks": completed_tasks_last_week,
         "counter": len(all_tasks_flat),
         "today": today,
+        "status_options": status_options,
+        "builtin_status_keys": BUILTIN_KEYS,
     }
     return render(request, "basic_app/tasks.html", context)
+
+
+@login_required
+def kanban_column_create(request):
+    if request.method != "POST":
+        return redirect("basic_app:user_tasks_view")
+    ensure_kanban_builtins(request.user)
+    label = (request.POST.get("label") or "").strip()
+    if not label:
+        messages.error(request, "Label is required.")
+        return redirect("basic_app:user_tasks_view")
+    raw_key = (request.POST.get("key") or "").strip()
+    if raw_key:
+        key = raw_key.upper().replace(" ", "_")
+        key = re.sub(r"[^A-Z0-9_]", "_", key)
+        key = re.sub(r"_+", "_", key).strip("_")[:64]
+        if not key:
+            messages.error(request, "Invalid key.")
+            return redirect("basic_app:user_tasks_view")
+    else:
+        key = derive_key_from_label(label, request.user)
+    if key in BUILTIN_KEYS:
+        messages.error(request, "This key is reserved for a built-in column.")
+        return redirect("basic_app:user_tasks_view")
+    if KanbanColumnDefinition.objects.filter(user=request.user, key=key).exists():
+        messages.error(request, "A column with this key already exists.")
+        return redirect("basic_app:user_tasks_view")
+    KanbanColumnDefinition.objects.create(
+        user=request.user,
+        key=key,
+        label=label,
+        sort_order=next_custom_sort_order(request.user),
+        is_builtin=False,
+    )
+    messages.success(request, "Column added.")
+    return redirect("basic_app:user_tasks_view")
 
 
 @login_required

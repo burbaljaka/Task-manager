@@ -1,11 +1,36 @@
 from django.db import models
 from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
+from django.db.models import UniqueConstraint
 from django.utils import timezone
 from datetime import date
 
+from basic_app.kanban_utils import BUILTIN_KEYS, DEFAULT_BUILTIN_LABELS
+
 
 # Create your models here.
+
+
+class KanbanColumnDefinition(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="kanban_columns")
+    key = models.CharField(max_length=64)
+    label = models.CharField(max_length=200)
+    sort_order = models.PositiveIntegerField()
+    is_builtin = models.BooleanField(default=False)
+
+    class Meta:
+        constraints = [
+            UniqueConstraint(fields=["user", "key"], name="uniq_kanban_column_user_key"),
+        ]
+        indexes = [
+            models.Index(fields=["user", "sort_order"]),
+        ]
+        ordering = ["sort_order", "key"]
+
+    def __str__(self) -> str:
+        return f"{self.key} ({self.label})"
+
+
 class UserProfileInfo(models.Model):
     # Create relationship (don't inherit from User!)
     user = models.OneToOneField(User, on_delete=models.DO_NOTHING)
@@ -22,13 +47,6 @@ class UserProfileInfo(models.Model):
 
 
 class UserTask(models.Model):
-    STATUS_CHOICES = [
-        ('TODO', 'TODO'),
-        ('IN_PROGRESS', 'IN_PROGRESS'),
-        ('COMPLETED', 'COMPLETED'),
-        ('CANCELLED', 'CANCELLED'),
-    ]
-    
     PRIORITY_CHOICES = [
         (1, 'LOW'),
         (2, 'MEDIUM'),
@@ -45,8 +63,8 @@ class UserTask(models.Model):
     partnumber = models.IntegerField(default=0)
     to_show = models.IntegerField(default=1)
     
-    # New fields
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='TODO')
+    # New fields (allowed keys: built-ins + KanbanColumnDefinition + orphan current value)
+    status = models.CharField(max_length=64, default="TODO")
     due_date = models.DateField(null=True, blank=True)
     priority = models.IntegerField(choices=PRIORITY_CHOICES, default=2)
     comment = models.TextField(null=True, blank=True)
@@ -55,7 +73,35 @@ class UserTask(models.Model):
 
     def __str__(self):
         return self.name
-    
+
+    def allowed_status_keys(self) -> set[str]:
+        keys: set[str] = set(BUILTIN_KEYS)
+        uid = getattr(self, "user_id", None)
+        if not uid and getattr(self, "user", None) and getattr(self.user, "pk", None):
+            uid = self.user.pk
+        if uid:
+            keys |= set(
+                KanbanColumnDefinition.objects.filter(user_id=uid).values_list(
+                    "key", flat=True
+                )
+            )
+        if self.pk and self.status:
+            keys.add(self.status)
+        return keys
+
+    def get_status_label(self) -> str:
+        if self.status in DEFAULT_BUILTIN_LABELS:
+            return DEFAULT_BUILTIN_LABELS[self.status]
+        uid = getattr(self, "user_id", None)
+        if not uid and getattr(self, "user", None):
+            uid = self.user_id
+        if not uid:
+            return self.status
+        col = KanbanColumnDefinition.objects.filter(user_id=uid, key=self.status).first()
+        if col:
+            return col.label
+        return self.status
+
     def clean(self):
         """Validate model to prevent circular references and ensure user ownership"""
         # Check if user is set safely (avoid RelatedObjectDoesNotExist)
@@ -125,7 +171,10 @@ class UserTask(models.Model):
                         raise ValidationError({'parent_task': 'Circular reference detected. A task cannot be its own ancestor.'})
                 except AttributeError:
                     pass
-    
+
+        if self.status and self.status not in self.allowed_status_keys():
+            raise ValidationError({"status": "Invalid status for this user."})
+
     def save(self, *args, **kwargs):
         """Override save to run validation and track completion date"""
         # Ensure user is set before validation

@@ -1,7 +1,7 @@
 from django import forms
 from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
-from basic_app.models import UserProfileInfo, UserTask, PartTask
+from basic_app.models import KanbanColumnDefinition, UserProfileInfo, UserTask, PartTask
 from datetime import date
 
 class UserForm(forms.ModelForm):
@@ -67,7 +67,13 @@ class UserTaskForm(forms.ModelForm):
         user = kwargs.pop('user', None)
         task_id = kwargs.pop('task_id', None)
         super().__init__(*args, **kwargs)
-        
+        self._user = user
+        if user:
+            cols = KanbanColumnDefinition.objects.filter(user=user).order_by(
+                "sort_order", "key"
+            )
+            self.fields["status"].choices = [(c.key, c.label) for c in cols]
+
         # Limit parent_task queryset to user's tasks, excluding self and subtasks
         if user:
             parent_queryset = UserTask.objects.filter(user=user, to_show=1)
@@ -121,6 +127,23 @@ class UserTaskForm(forms.ModelForm):
         if priority and (priority < 1 or priority > 4):
             raise ValidationError('Priority must be between 1 and 4.')
         return priority
+
+    def clean_status(self):
+        status = self.cleaned_data.get("status")
+        user = getattr(self, "_user", None)
+        if not user or not status:
+            return status
+        task_id = self.cleaned_data.get("id")
+        if task_id:
+            try:
+                inst = UserTask.objects.get(pk=task_id, user=user)
+            except UserTask.DoesNotExist:
+                return status
+        else:
+            inst = UserTask(user=user)
+        if status not in inst.allowed_status_keys():
+            raise ValidationError("Invalid status for this user.")
+        return status
 
 class StartTaskForm(forms.ModelForm):
     name = forms.CharField()
