@@ -23,7 +23,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY learning_users/ /app/
 
 # Create directories for data, media and static files
-RUN mkdir -p /app/data /app/media /app/static
+RUN mkdir -p /app/data /app/media /app/static /app/staticfiles
 
 # Copy entrypoint script
 COPY docker-entrypoint.sh /app/

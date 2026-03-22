@@ -142,6 +142,8 @@ USE_TZ = False
 
 STATIC_URL = '/static/'
 STATICFILES_DIRS = [STATIC_DIR,]
+# Required for collectstatic (must differ from paths in STATICFILES_DIRS)
+STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
 
 # MEDIA INFORMATION:
 MEDIA_ROOT = MEDIA_DIR
