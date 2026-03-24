@@ -11,9 +11,9 @@
     <h3 class="mb-0" style="color: #4a6fa5; font-size: 1.25rem; font-weight: 600;">Active Tasks</h3>
     <button type="button" class="btn btn-outline-primary btn-sm rounded-pill" data-bs-toggle="modal" data-bs-target="#addKanbanColumnModal">+ Add column</button>
   </div>
-  <p class="text-muted small mb-3" id="kanban-board-help">Колонки доски (настроенные в определениях колонок) можно менять местами, перетаскивая за ручку слева от названия. Порядок карточек между колонками по-прежнему меняется через поля на карточке, не перетаскиванием.</p>
+  <p class="text-muted small mb-3" id="kanban-board-help">Колонки доски (настроенные в определениях колонок) можно менять местами, перетаскивая за ручку слева от названия. Порядок карточек внутри колонки и между колонками задаётся перетаскиванием карточки за ручку слева от номера задачи; при необходимости статус и срок по-прежнему можно менять полями на карточке.</p>
   {{ initial_reorderable_column_keys|json_script:"kanban-initial-reorderable-keys" }}
-  <div class="kanban-board" data-kanban-reorder-url="{% url 'basic_app:kanban_column_reorder' %}">
+  <div class="kanban-board" data-kanban-reorder-url="{% url 'basic_app:kanban_column_reorder' %}" data-kanban-task-reorder-url="{% url 'basic_app:kanban_task_reorder' %}">
     <div class="kanban-board-reorderable" aria-label="Настроенные колонки доски">
     {% for column in kanban_columns %}
       {% if column.is_reorderable %}
@@ -224,6 +224,32 @@
   .kanban-column-body {
     overflow-y: visible;
     padding: 0.5rem;
+    min-height: 2.5rem;
+  }
+
+  .task-card-drag-handle {
+    cursor: grab;
+    flex-shrink: 0;
+    line-height: 1;
+    user-select: none;
+    text-decoration: none !important;
+    font-size: 1rem;
+    letter-spacing: -0.1em;
+    border: none;
+    background: transparent;
+    padding: 0 0.15rem 0 0;
+  }
+
+  .task-card-drag-handle:active {
+    cursor: grabbing;
+  }
+
+  .task-card--ghost {
+    opacity: 0.55;
+  }
+
+  .task-card--chosen {
+    box-shadow: 0 2px 10px rgba(74, 111, 165, 0.25);
   }
 
   .kanban-empty-placeholder {
@@ -840,9 +866,90 @@
     toRemove.forEach(function(c) { el.classList.remove(c); });
   }
 
+  function postKanbanTaskOrder() {
+    var board = document.querySelector('.kanban-board');
+    if (!board) return;
+    var postUrl = board.getAttribute('data-kanban-task-reorder-url');
+    if (!postUrl) return;
+    var cols = board.querySelectorAll('.kanban-column:not([data-kanban-fixed])');
+    var taskIdsByStatus = {};
+    cols.forEach(function(col) {
+      var st = col.getAttribute('data-kanban-status');
+      var ids = [];
+      col.querySelectorAll('.kanban-column-body .task-card[data-task-id]').forEach(function(card) {
+        ids.push(parseInt(card.getAttribute('data-task-id'), 10));
+      });
+      taskIdsByStatus[st] = ids;
+    });
+    var csrftoken = getCookie('csrftoken');
+    fetch(postUrl, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRFToken': csrftoken || ''
+      },
+      body: JSON.stringify({ taskIdsByStatus: taskIdsByStatus })
+    }).then(function(r) {
+      return r.text().then(function(text) {
+        var j = null;
+        try { j = text ? JSON.parse(text) : null; } catch (e) { j = null; }
+        return { ok: r.ok, status: r.status, body: j };
+      });
+    }).then(function(res) {
+      if (res.ok && res.body && res.body.ok === true) {
+        return;
+      }
+      var msg = (res.body && res.body.error) ? res.body.error : 'Не удалось сохранить порядок задач';
+      alert(msg);
+      window.location.reload();
+    }).catch(function () {
+      alert('Сетевая ошибка при сохранении порядка задач');
+      window.location.reload();
+    });
+  }
+
+  function initKanbanTaskSortable() {
+    var board = document.querySelector('.kanban-board');
+    if (!board || typeof Sortable === 'undefined') return;
+    var postUrl = board.getAttribute('data-kanban-task-reorder-url');
+    if (!postUrl) return;
+    var bodies = board.querySelectorAll('.kanban-column:not([data-kanban-fixed]) .kanban-column-body');
+    bodies.forEach(function(body) {
+      try {
+        Sortable.create(body, {
+          group: { name: 'kanban-tasks', pull: true, put: true },
+          animation: 150,
+          handle: '.task-card-drag-handle',
+          draggable: '.task-card[data-task-id]',
+          delayOnTouchOnly: true,
+          delay: 80,
+          touchStartThreshold: 5,
+          emptyInsertThreshold: 40,
+          ghostClass: 'task-card--ghost',
+          chosenClass: 'task-card--chosen',
+          onStart: function (evt) {
+            var h = evt.item && evt.item.querySelector && evt.item.querySelector('.task-card-drag-handle');
+            if (h) h.setAttribute('aria-grabbed', 'true');
+          },
+          onEnd: function (evt) {
+            var h = evt.item && evt.item.querySelector && evt.item.querySelector('.task-card-drag-handle');
+            if (h) h.setAttribute('aria-grabbed', 'false');
+            postKanbanTaskOrder();
+          }
+        });
+      } catch (e) {
+        if (typeof console !== 'undefined' && console.warn) {
+          console.warn('Kanban task Sortable init failed', e);
+        }
+      }
+    });
+  }
+
   document.addEventListener('DOMContentLoaded', function() {
     initializeTasks();
     initKanbanColumnSortable();
+    initKanbanTaskSortable();
   });
 
   function initializeTasks() {

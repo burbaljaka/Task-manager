@@ -70,9 +70,18 @@ class UserTask(models.Model):
     comment = models.TextField(null=True, blank=True)
     parent_task = models.ForeignKey('self', on_delete=models.CASCADE, null=True, blank=True, related_name='subtasks')
     completion_date = models.DateField(null=True, blank=True)  # Track when task was completed
+    kanban_position = models.PositiveIntegerField(default=0)
 
     def __str__(self):
         return self.name
+
+    class Meta:
+        indexes = [
+            models.Index(
+                fields=["user", "status", "kanban_position"],
+                name="usertask_user_status_kpos_idx",
+            ),
+        ]
 
     def allowed_status_keys(self) -> set[str]:
         keys: set[str] = set(BUILTIN_KEYS)

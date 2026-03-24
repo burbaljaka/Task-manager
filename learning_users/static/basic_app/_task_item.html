@@ -13,6 +13,7 @@
       
       <!-- Metadata Bar -->
       <div class="task-metadata-bar">
+        <button type="button" class="task-card-drag-handle btn btn-link p-0 text-secondary" aria-label="Переместить задачу" title="Перетащите, чтобы изменить порядок или колонку" tabindex="0">&#8942;&#8942;</button>
         <a href="{% url 'basic_app:task_detail' task.id %}"
            target="_blank"
            rel="noopener noreferrer"

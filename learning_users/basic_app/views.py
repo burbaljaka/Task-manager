@@ -1,11 +1,12 @@
-from collections import defaultdict
+from collections import Counter, defaultdict
 from collections.abc import Iterator
 import json
 import re
 from django.contrib import messages
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.shortcuts import get_object_or_404, redirect, render
 from basic_app.forms import UserForm, UserProfileInfoForm, UserTaskForm, StartTaskForm, StopTaskForm, ReturnTaskForm
-from basic_app.schemas import KanbanColumnReorderBody
+from basic_app.schemas import KanbanColumnReorderBody, KanbanTaskReorderBody
 from basic_app.kanban_utils import (
     BUILTIN_KEYS,
     ensure_kanban_builtins,
@@ -17,6 +18,7 @@ from django.utils.timezone import localtime, now
 # Extra Imports for the Login and Logout Capabilities
 from django.contrib.auth import authenticate, login, logout
 from django.db import transaction
+from django.db.models import Max
 from django.http import HttpResponseRedirect, HttpResponse, JsonResponse
 from django.urls import reverse
 from django.contrib.auth.decorators import login_required
@@ -44,8 +46,73 @@ def iter_all_tasks_in_tree(parent_tasks: list) -> Iterator[UserTask]:
 def sort_tasks_for_kanban_column(tasks: list[UserTask]) -> list[UserTask]:
     return sorted(
         tasks,
-        key=lambda t: (t.due_date is None, t.due_date or datetime.date.min, t.id),
+        key=lambda t: (
+            t.kanban_position,
+            t.due_date is None,
+            t.due_date or datetime.date.min,
+            t.id,
+        ),
     )
+
+
+def gather_kanban_board_inputs(user_id: int) -> tuple[list, list[UserTask], list[UserTask]]:
+    parent_tasks = get_task_hierarchy(user_id)
+    tree_ids = {t.id for t in iter_all_tasks_in_tree(parent_tasks)}
+    non_completed_flat = list(
+        UserTask.objects.filter(user_id=user_id, to_show=1)
+        .exclude(status="COMPLETED")
+        .select_related("parent_task")
+    )
+    orphans: list[UserTask] = []
+    for task in non_completed_flat:
+        if task.id not in tree_ids:
+            task.subtasks_list = []
+            orphans.append(task)
+    completed_for_done = list(
+        UserTask.objects.filter(
+            user_id=user_id,
+            to_show=1,
+            status="COMPLETED",
+        ).select_related("parent_task")
+    )
+    return parent_tasks, orphans, completed_for_done
+
+
+def expected_task_ids_by_status_for_user(user_id: int) -> dict[str, list[int]]:
+    parent_tasks, orphans, completed_for_done = gather_kanban_board_inputs(user_id)
+    kanban_columns = build_kanban_columns_for_user(
+        user_id,
+        parent_tasks,
+        orphans,
+        completed_for_done,
+    )
+    out: dict[str, list[int]] = {}
+    for col in kanban_columns:
+        if col["status"] == "CANCELLED":
+            continue
+        out[col["status"]] = [t.id for t in col["tasks"]]
+    return out
+
+
+def task_snapshot_matches_expected(
+    expected: dict[str, list[int]],
+    received: dict[str, list[int]],
+) -> bool:
+    if set(expected.keys()) != set(received.keys()):
+        return False
+    for k in expected:
+        if Counter(received[k]) != Counter(expected[k]):
+            return False
+    return True
+
+
+def next_kanban_position_for_user_status(user_id: int, status: str) -> int:
+    agg = (
+        UserTask.objects.filter(user_id=user_id, to_show=1, status=status).aggregate(
+            m=Max("kanban_position")
+        )
+    ).get("m")
+    return 0 if agg is None else int(agg) + 1
 
 
 def build_kanban_columns_for_user(
@@ -381,15 +448,19 @@ def user_tasks_view(request):
                         parent_task = None
                 
                 if not form.errors:
+                    new_status = form.cleaned_data.get('status', 'TODO')
                     userform = UserTask(
                         name=form.cleaned_data['name'],
                         user=request.user,
                         timer=form.cleaned_data.get('timer', 0),
-                        status=form.cleaned_data.get('status', 'TODO'),
+                        status=new_status,
                         due_date=form.cleaned_data.get('due_date'),
                         priority=form.cleaned_data.get('priority', 2),
                         comment=form.cleaned_data.get('comment', ''),
-                        parent_task=parent_task
+                        parent_task=parent_task,
+                        kanban_position=next_kanban_position_for_user_status(
+                            request.user.id, new_status
+                        ),
                     )
                     # Save - model's save() will call full_clean() for validation
                     userform.save()
@@ -638,6 +709,58 @@ def kanban_column_reorder(request):
             KanbanColumnDefinition.objects.filter(user=user, key=key).update(
                 sort_order=index
             )
+
+    return JsonResponse({"ok": True})
+
+
+@login_required
+@require_POST
+def kanban_task_reorder(request):
+    content_type = (request.content_type or "").split(";")[0].strip().lower()
+    if content_type != "application/json":
+        return JsonResponse(
+            {"ok": False, "error": "Content-Type must be application/json"},
+            status=400,
+        )
+    try:
+        body = KanbanTaskReorderBody.model_validate_json(request.body)
+    except (ValidationError, json.JSONDecodeError, ValueError):
+        return JsonResponse(
+            {"ok": False, "error": "Invalid request body"},
+            status=400,
+        )
+
+    ensure_kanban_builtins(request.user)
+    user_id = request.user.id
+    expected = expected_task_ids_by_status_for_user(user_id)
+    received = body.task_ids_by_status
+    if not task_snapshot_matches_expected(expected, received):
+        return JsonResponse(
+            {
+                "ok": False,
+                "error": "Task ids do not match the current board state.",
+                "code": "taskIdsOutOfSync",
+            },
+            status=400,
+        )
+
+    try:
+        with transaction.atomic():
+            for status_key, ids in received.items():
+                for pos, tid in enumerate(ids):
+                    task = UserTask.objects.select_for_update().get(pk=tid, user_id=user_id)
+                    task.status = status_key
+                    task.kanban_position = pos
+                    task.save()
+    except DjangoValidationError:
+        return JsonResponse(
+            {
+                "ok": False,
+                "error": "Invalid status for one or more tasks.",
+                "code": "invalidStatusTransition",
+            },
+            status=400,
+        )
 
     return JsonResponse({"ok": True})
 

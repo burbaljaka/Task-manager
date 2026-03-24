@@ -11,6 +11,7 @@ from basic_app.kanban_utils import BUILTIN_ORDER_KEYS, ensure_kanban_builtins, s
 from basic_app.admin import UserTaskAdminForm
 from basic_app.models import KanbanColumnDefinition, UserTask
 from basic_app.views import (
+    expected_task_ids_by_status_for_user,
     iter_all_tasks_in_tree,
     sort_tasks_for_kanban_column,
 )
@@ -47,6 +48,27 @@ class KanbanHelpersTests(TestCase):
         t3 = UserTask.objects.create(user=user, name="c", status="TODO", due_date=None)
         sorted_tasks = sort_tasks_for_kanban_column([t1, t2, t3])
         self.assertEqual([t.id for t in sorted_tasks], [t2.id, t1.id, t3.id])
+
+    def test_sort_tasks_for_kanban_column_orders_by_kanban_position_first(self):
+        user = User.objects.create_user(username="u3", password="pass12345")
+        d_later = datetime.date(2025, 2, 1)
+        d_earlier = datetime.date(2025, 1, 1)
+        t_a = UserTask.objects.create(
+            user=user,
+            name="a",
+            status="TODO",
+            due_date=d_later,
+            kanban_position=1,
+        )
+        t_b = UserTask.objects.create(
+            user=user,
+            name="b",
+            status="TODO",
+            due_date=d_earlier,
+            kanban_position=0,
+        )
+        sorted_tasks = sort_tasks_for_kanban_column([t_a, t_b])
+        self.assertEqual([t.id for t in sorted_tasks], [t_b.id, t_a.id])
 
 
 class UserTasksKanbanViewTests(TestCase):
@@ -230,6 +252,82 @@ class UserTasksKanbanViewTests(TestCase):
         response = anon.post(
             url,
             data=json.dumps({"columnKeys": ["TODO", "IN_PROGRESS", "COMPLETED"]}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(response.url.startswith(settings.LOGIN_URL))
+
+    def test_kanban_task_reorder_persists_order_within_column(self):
+        ensure_kanban_builtins(self.user)
+        t1 = UserTask.objects.create(user=self.user, name="a", status="TODO")
+        t2 = UserTask.objects.create(user=self.user, name="b", status="TODO")
+        expected = expected_task_ids_by_status_for_user(self.user.id)
+        body = {"taskIdsByStatus": {}}
+        for k, ids in expected.items():
+            body["taskIdsByStatus"][k] = list(ids)
+        body["taskIdsByStatus"]["TODO"] = [t2.id, t1.id]
+        url = reverse("basic_app:kanban_task_reorder")
+        response = self.client.post(
+            url,
+            data=json.dumps(body),
+            content_type="application/json",
+            **self._csrf_header(),
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(json.loads(response.content.decode()), {"ok": True})
+        t1.refresh_from_db()
+        t2.refresh_from_db()
+        self.assertEqual(t1.kanban_position, 1)
+        self.assertEqual(t2.kanban_position, 0)
+
+    def test_kanban_task_reorder_out_of_sync_returns_code(self):
+        ensure_kanban_builtins(self.user)
+        UserTask.objects.create(user=self.user, name="t", status="TODO")
+        expected = expected_task_ids_by_status_for_user(self.user.id)
+        body = {"taskIdsByStatus": {}}
+        for k, ids in expected.items():
+            body["taskIdsByStatus"][k] = list(ids)
+        body["taskIdsByStatus"]["TODO"] = []
+        url = reverse("basic_app:kanban_task_reorder")
+        response = self.client.post(
+            url,
+            data=json.dumps(body),
+            content_type="application/json",
+            **self._csrf_header(),
+        )
+        self.assertEqual(response.status_code, 400)
+        payload = json.loads(response.content.decode())
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["code"], "taskIdsOutOfSync")
+
+    def test_kanban_task_reorder_rejects_non_json_content_type(self):
+        ensure_kanban_builtins(self.user)
+        url = reverse("basic_app:kanban_task_reorder")
+        response = self.client.post(
+            url,
+            data={"taskIdsByStatus": {}},
+            **self._csrf_header(),
+        )
+        self.assertEqual(response.status_code, 400)
+
+    def test_kanban_task_reorder_rejects_invalid_json(self):
+        ensure_kanban_builtins(self.user)
+        url = reverse("basic_app:kanban_task_reorder")
+        response = self.client.post(
+            url,
+            data="{not json",
+            content_type="application/json",
+            **self._csrf_header(),
+        )
+        self.assertEqual(response.status_code, 400)
+
+    def test_kanban_task_reorder_anonymous_redirects_to_login(self):
+        ensure_kanban_builtins(self.user)
+        url = reverse("basic_app:kanban_task_reorder")
+        anon = Client()
+        response = anon.post(
+            url,
+            data=json.dumps({"taskIdsByStatus": {"TODO": [], "IN_PROGRESS": [], "COMPLETED": []}}),
             content_type="application/json",
         )
         self.assertEqual(response.status_code, 302)
