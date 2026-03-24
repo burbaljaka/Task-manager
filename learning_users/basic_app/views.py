@@ -98,12 +98,19 @@ def task_snapshot_matches_expected(
     expected: dict[str, list[int]],
     received: dict[str, list[int]],
 ) -> bool:
+    """True if received uses the same column keys and the same multiset of task ids as the current board.
+
+    Per-column lists may differ from the DB when moving tasks between columns; only the union of ids
+    (and column key set) must match so we reject stale/foreign ids without blocking valid moves.
+    """
     if set(expected.keys()) != set(received.keys()):
         return False
+    exp_union: Counter = Counter()
+    rec_union: Counter = Counter()
     for k in expected:
-        if Counter(received[k]) != Counter(expected[k]):
-            return False
-    return True
+        exp_union.update(expected[k])
+        rec_union.update(received[k])
+    return exp_union == rec_union
 
 
 def next_kanban_position_for_user_status(user_id: int, status: str) -> int:

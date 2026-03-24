@@ -280,6 +280,30 @@ class UserTasksKanbanViewTests(TestCase):
         self.assertEqual(t1.kanban_position, 1)
         self.assertEqual(t2.kanban_position, 0)
 
+    def test_kanban_task_reorder_moves_task_between_columns(self):
+        ensure_kanban_builtins(self.user)
+        t = UserTask.objects.create(user=self.user, name="move me", status="TODO")
+        expected = expected_task_ids_by_status_for_user(self.user.id)
+        body = {"taskIdsByStatus": {}}
+        for k, ids in expected.items():
+            body["taskIdsByStatus"][k] = [i for i in ids if i != t.id]
+        if "IN_PROGRESS" not in body["taskIdsByStatus"]:
+            self.fail("expected IN_PROGRESS column")
+        body["taskIdsByStatus"]["IN_PROGRESS"] = list(
+            body["taskIdsByStatus"]["IN_PROGRESS"]
+        ) + [t.id]
+        url = reverse("basic_app:kanban_task_reorder")
+        response = self.client.post(
+            url,
+            data=json.dumps(body),
+            content_type="application/json",
+            **self._csrf_header(),
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(json.loads(response.content.decode()), {"ok": True})
+        t.refresh_from_db()
+        self.assertEqual(t.status, "IN_PROGRESS")
+
     def test_kanban_task_reorder_out_of_sync_returns_code(self):
         ensure_kanban_builtins(self.user)
         UserTask.objects.create(user=self.user, name="t", status="TODO")
