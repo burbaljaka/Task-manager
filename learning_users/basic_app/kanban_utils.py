@@ -16,12 +16,12 @@ BUILTIN_ORDER_KEYS: tuple[str, ...] = (
     "CANCELLED",
 )
 
-# Default English labels for seeding and fallbacks.
+# Default Russian labels for seeding and fallbacks.
 DEFAULT_BUILTIN_LABELS: dict[str, str] = {
-    "TODO": "To Do",
-    "IN_PROGRESS": "In Progress",
-    "COMPLETED": "Done",
-    "CANCELLED": "Cancelled",
+    "TODO": "К выполнению",
+    "IN_PROGRESS": "В работе",
+    "COMPLETED": "Готово",
+    "CANCELLED": "Отменено",
 }
 
 BUILTIN_KEYS = frozenset(BUILTIN_ORDER_KEYS)

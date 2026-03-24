@@ -3,20 +3,20 @@
 {% block body_block %}
 <div class="mb-4">
   <p class="mb-3">
-    <a href="{% url 'basic_app:user_tasks_view' %}" class="text-decoration-none">← Back to board</a>
+    <a href="{% url 'basic_app:user_tasks_view' %}" class="text-decoration-none">← К доске</a>
   </p>
   <h1 class="h3 mb-3"><span class="text-muted">#{{ task.id }}</span> {{ task.name }}</h1>
   <dl class="row mb-0">
-    <dt class="col-sm-3">Status</dt>
+    <dt class="col-sm-3">Статус</dt>
     <dd class="col-sm-9">{{ task.get_status_label }}</dd>
-    <dt class="col-sm-3">Priority</dt>
+    <dt class="col-sm-3">Приоритет</dt>
     <dd class="col-sm-9">{{ task.get_priority_display_name }}</dd>
     {% if task.due_date %}
-    <dt class="col-sm-3">Due date</dt>
+    <dt class="col-sm-3">Срок</dt>
     <dd class="col-sm-9">{{ task.due_date|date:"Y-m-d" }}</dd>
     {% endif %}
     {% if task.comment %}
-    <dt class="col-sm-3">Comment</dt>
+    <dt class="col-sm-3">Комментарий</dt>
     <dd class="col-sm-9">{{ task.comment }}</dd>
     {% endif %}
   </dl>

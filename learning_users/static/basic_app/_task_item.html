@@ -20,7 +20,7 @@
            class="task-ref-badge"
            title="Открыть задачу #{{ task.id }}">#{{ task.id }}</a>
         <!-- Priority Stars -->
-        <span class="priority-stars priority-{{ task.get_priority_display_name|lower }}" title="{{ task.get_priority_display_name }} Priority">
+        <span class="priority-stars priority-{{ task.get_priority_css_class }}" title="{{ task.get_priority_display_name }}">
           {% if task.priority >= 1 %}<span class="priority-star">★</span>{% else %}<span class="priority-star">☆</span>{% endif %}
           {% if task.priority >= 2 %}<span class="priority-star">★</span>{% else %}<span class="priority-star">☆</span>{% endif %}
           {% if task.priority >= 3 %}<span class="priority-star">★</span>{% else %}<span class="priority-star">☆</span>{% endif %}
@@ -42,7 +42,7 @@
                class="due-date-input form-control form-control-sm" 
                onchange="updateTaskField({{ task.id }}, 'due_date', this.value)"
                style="display:inline-block; width:auto; padding: 0.25rem 0.5rem; font-size: 0.75rem; border-radius: 0.25rem; cursor: pointer; max-width: 140px;"
-               placeholder="Set due date">
+               placeholder="Срок">
         
         <!-- Comment Toggle -->
         <button type="button" class="comment-toggle" onclick="toggleComment({{ task.id }})">
@@ -59,7 +59,7 @@
         <div class="task-name-section">
           {% if task.parent_task %}
           <small class="text-muted me-2" style="font-size: 0.75rem; font-style: italic;">
-            <span style="color: #6c757d;">Parent: {{ task.parent_task.name }}</span>
+            <span style="color: #6c757d;">Родитель: {{ task.parent_task.name }}</span>
           </small>
           {% endif %}
           <input type="text" name="name" value="{{ task.name }}" id="task-name-{{ task.id }}" data-original-name="{{ task.name }}" class="form-control form-control-sm rounded-pill bg-white border-0 fw-semibold px-2 py-1 me-2" style="max-width:400px; min-width:200px; box-shadow:0 1px 4px rgba(74,111,165,0.05); font-size: 0.9rem; cursor: text;" onblur="updateTaskName({{ task.id }}, this.value)" onkeypress="if(event.key === 'Enter') { event.preventDefault(); this.blur(); }">
@@ -89,7 +89,7 @@
         <div class="task-actions">
           <button type="submit" name="start_button" class="btn btn-outline-primary btn-sm rounded-pill me-1" style="display:block;">▶</button>
           <button type="submit" name="stop_button" class="btn stop-btn btn-sm rounded-pill me-1" style="display:none;">■</button>
-          <button type="button" class="btn btn-outline-info btn-sm rounded-pill me-1" onclick="create_subtask({{ task.id }})" title="Add Subtask">+</button>
+          <button type="button" class="btn btn-outline-info btn-sm rounded-pill me-1" onclick="create_subtask({{ task.id }})" title="Добавить подзадачу">+</button>
           <button type="button" name="delete_button-{{ task.id }}" class="btn btn-outline-danger btn-sm rounded-pill" onclick="delete_task(this.name)">×</button>
         </div>
       </div>
@@ -99,7 +99,7 @@
         {% if task.comment %}
         <div class="comment-preview" id="comment-preview-{{ task.id }}" onclick="editComment({{ task.id }})">{{ task.comment }}</div>
         {% endif %}
-        <textarea name="comment" id="comment-textarea-{{ task.id }}" class="comment-textarea{% if task.comment %} comment-textarea-hidden{% endif %}" rows="2" data-original-comment="{{ task.comment|default:'' }}" placeholder="Add a comment..." onblur="updateTaskComment({{ task.id }}, this.value)" onfocus="this.classList.remove('comment-textarea-hidden')"></textarea>
+        <textarea name="comment" id="comment-textarea-{{ task.id }}" class="comment-textarea{% if task.comment %} comment-textarea-hidden{% endif %}" rows="2" data-original-comment="{{ task.comment|default:'' }}" placeholder="Добавить комментарий…" onblur="updateTaskComment({{ task.id }}, this.value)" onfocus="this.classList.remove('comment-textarea-hidden')"></textarea>
       </div>
     </form>
     
@@ -111,7 +111,7 @@
             {% if forloop.first %}
             <div class="subtask-container has-subtasks">
               <button type="button" class="expand-toggle" data-toggle-subtasks="{{ task.id }}" onclick="toggleSubtasks({{ task.id }})">
-                Subtasks (
+                Подзадачи (
                 {% for s in subtasks %}
                   {% if s.status != 'COMPLETED' %}1{% endif %}
                 {% endfor %}

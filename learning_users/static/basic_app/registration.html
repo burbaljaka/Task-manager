@@ -10,14 +10,14 @@
         <div class="card-header text-center py-4" style="background: linear-gradient(135deg, #4a6fa5 0%, #6b8fc7 100%); border: none;">
           {% if registered %}
             <h2 class="mb-0 text-white fw-bold" style="font-size: 1.75rem; letter-spacing: 0.5px;">
-              Registration Successful!
+              Регистрация прошла успешно
             </h2>
-            <p class="text-white-50 mb-0 mt-2" style="font-size: 0.9rem;">Thank you for registering</p>
+            <p class="text-white-50 mb-0 mt-2" style="font-size: 0.9rem;">Спасибо за регистрацию</p>
           {% else %}
             <h2 class="mb-0 text-white fw-bold" style="font-size: 1.75rem; letter-spacing: 0.5px;">
-              Create Account
+              Создать аккаунт
             </h2>
-            <p class="text-white-50 mb-0 mt-2" style="font-size: 0.9rem;">Fill out the form to get started</p>
+            <p class="text-white-50 mb-0 mt-2" style="font-size: 0.9rem;">Заполните форму, чтобы начать</p>
           {% endif %}
         </div>
         
@@ -30,10 +30,10 @@
                   <path d="M16 8A8 8 0 1 1 0 8a8 8 0 0 1 16 0zm-3.97-3.03a.75.75 0 0 0-1.08.022L7.477 9.417 5.384 7.323a.75.75 0 0 0-1.06 1.061l2.5 2.5a.75.75 0 0 0 1.07-.01l4.5-5.5a.75.75 0 0 0-.022-1.08z"/>
                 </svg>
               </div>
-              <h3 class="mb-3" style="color: #4a6fa5;">Thank you for registering!</h3>
-              <p class="text-muted mb-4">Your account has been created successfully.</p>
+              <h3 class="mb-3" style="color: #4a6fa5;">Спасибо за регистрацию!</h3>
+              <p class="text-muted mb-4">Аккаунт успешно создан.</p>
               <a href="{% url 'basic_app:user_login' %}" class="btn btn-lg text-white fw-bold" style="background: linear-gradient(135deg, #4a6fa5 0%, #6b8fc7 100%); border: none; border-radius: 12px; padding: 0.75rem 2rem; transition: all 0.3s ease; box-shadow: 0 4px 12px rgba(74,111,165,0.3);" onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 6px 16px rgba(74,111,165,0.4)';" onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='0 4px 12px rgba(74,111,165,0.3)';">
-                Go to Login
+                Перейти ко входу
               </a>
             </div>
           {% else %}
@@ -43,7 +43,7 @@
               <!-- Username Field -->
               <div class="mb-4">
                 <label for="{{ user_form.username.id_for_label }}" class="form-label fw-semibold" style="color: #4a6fa5; font-size: 0.9rem; margin-bottom: 0.5rem;">
-                  Username
+                  Имя пользователя
                 </label>
                 <div class="input-group input-group-lg">
                   <span class="input-group-text" style="background: #f3f8fc; border: 2px solid #e3f0ff; border-right: none; border-radius: 12px 0 0 12px;">
@@ -61,7 +61,7 @@
               <!-- Email Field -->
               <div class="mb-4">
                 <label for="{{ user_form.email.id_for_label }}" class="form-label fw-semibold" style="color: #4a6fa5; font-size: 0.9rem; margin-bottom: 0.5rem;">
-                  Email
+                  Электронная почта
                 </label>
                 <div class="input-group input-group-lg">
                   <span class="input-group-text" style="background: #f3f8fc; border: 2px solid #e3f0ff; border-right: none; border-radius: 12px 0 0 12px;">
@@ -79,7 +79,7 @@
               <!-- Password Field -->
               <div class="mb-4">
                 <label for="{{ user_form.password.id_for_label }}" class="form-label fw-semibold" style="color: #4a6fa5; font-size: 0.9rem; margin-bottom: 0.5rem;">
-                  Password
+                  Пароль
                 </label>
                 <div class="input-group input-group-lg">
                   <span class="input-group-text" style="background: #f3f8fc; border: 2px solid #e3f0ff; border-right: none; border-radius: 12px 0 0 12px;">
@@ -98,7 +98,7 @@
               {% if profile_form.portfolio_site %}
               <div class="mb-4">
                 <label for="{{ profile_form.portfolio_site.id_for_label }}" class="form-label fw-semibold" style="color: #4a6fa5; font-size: 0.9rem; margin-bottom: 0.5rem;">
-                  Portfolio Site <span class="text-muted" style="font-size: 0.8rem;">(optional)</span>
+                  Сайт портфолио <span class="text-muted" style="font-size: 0.8rem;">(необязательно)</span>
                 </label>
                 <div class="input-group input-group-lg">
                   <span class="input-group-text" style="background: #f3f8fc; border: 2px solid #e3f0ff; border-right: none; border-radius: 12px 0 0 12px;">
@@ -118,7 +118,7 @@
               {% if profile_form.profile_pic %}
               <div class="mb-4">
                 <label for="{{ profile_form.profile_pic.id_for_label }}" class="form-label fw-semibold" style="color: #4a6fa5; font-size: 0.9rem; margin-bottom: 0.5rem;">
-                  Profile Picture <span class="text-muted" style="font-size: 0.8rem;">(optional)</span>
+                  Фото профиля <span class="text-muted" style="font-size: 0.8rem;">(необязательно)</span>
                 </label>
                 <div class="input-group input-group-lg">
                   <span class="input-group-text" style="background: #f3f8fc; border: 2px solid #e3f0ff; border-right: none; border-radius: 12px 0 0 12px;">
@@ -144,16 +144,16 @@
                   onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 6px 16px rgba(74,111,165,0.4)';"
                   onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='0 4px 12px rgba(74,111,165,0.3)';"
                 >
-                  Register
+                  Зарегистрироваться
                 </button>
               </div>
 
               <!-- Login Link -->
               <div class="text-center">
                 <p class="mb-0" style="color: #6c757d; font-size: 0.9rem;">
-                  Already have an account? 
+                  Уже есть аккаунт? 
                   <a href="{% url 'basic_app:user_login' %}" class="text-decoration-none fw-semibold" style="color: #4a6fa5;">
-                    Sign in here
+                    Войти
                   </a>
                 </p>
               </div>
@@ -168,7 +168,7 @@
           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16" style="display: inline-block; vertical-align: -2px; margin-right: 4px;">
             <path d="M8 0c-.69 0-1.843.265-2.928.56-1.11.3-2.229.655-2.887.87a1.54 1.54 0 0 0-1.044 1.262c-.596 4.477.787 7.795 2.465 9.99a11.777 11.777 0 0 0 2.517 2.453c.386.273.744.482 1.048.625.28.132.581.24.829.24s.548-.108.829-.24a7.159 7.159 0 0 0 1.048-.625 11.775 11.775 0 0 0 2.517-2.453c1.678-2.195 3.061-5.513 2.465-9.99a1.541 1.541 0 0 0-1.044-1.263 62.467 62.467 0 0 0-2.887-.87C9.843.266 8.69 0 8 0zm-.5 5a.5.5 0 0 1 1 0v1.5a.5.5 0 0 1-1 0V5zm0 3a.5.5 0 0 1 1 0v3a.5.5 0 0 1-1 0V8z"/>
           </svg>
-          Your data is secure and encrypted
+          Ваши данные надёжно защищены
         </p>
       </div>
     </div>

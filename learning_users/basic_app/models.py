@@ -48,10 +48,10 @@ class UserProfileInfo(models.Model):
 
 class UserTask(models.Model):
     PRIORITY_CHOICES = [
-        (1, 'LOW'),
-        (2, 'MEDIUM'),
-        (3, 'HIGH'),
-        (4, 'URGENT'),
+        (1, 'Низкий'),
+        (2, 'Средний'),
+        (3, 'Высокий'),
+        (4, 'Срочный'),
     ]
     
     user = models.ForeignKey(User, on_delete=models.DO_NOTHING)
@@ -168,7 +168,7 @@ class UserTask(models.Model):
                         pass
                 
                 if parent_user_id and current_user_id and parent_user_id != current_user_id:
-                    raise ValidationError({'parent_task': 'Parent task must belong to the same user.'})
+                    raise ValidationError({'parent_task': 'Родительская задача должна принадлежать тому же пользователю.'})
             except (AttributeError, UserTask.user.RelatedObjectDoesNotExist):
                 # If we can't access user attributes, skip this check
                 pass
@@ -177,12 +177,12 @@ class UserTask(models.Model):
             if parent_task_changed:
                 try:
                     if not self.parent_task.can_be_parent_of(self):
-                        raise ValidationError({'parent_task': 'Circular reference detected. A task cannot be its own ancestor.'})
+                        raise ValidationError({'parent_task': 'Обнаружена циклическая ссылка. Задача не может быть своим предком.'})
                 except AttributeError:
                     pass
 
         if self.status and self.status not in self.allowed_status_keys():
-            raise ValidationError({"status": "Invalid status for this user."})
+            raise ValidationError({"status": "Недопустимый статус для этого пользователя."})
 
     def save(self, *args, **kwargs):
         """Override save to run validation and track completion date"""
@@ -243,6 +243,10 @@ class UserTask(models.Model):
     def get_priority_display_name(self):
         """Get human-readable priority name"""
         return dict(self.PRIORITY_CHOICES)[self.priority]
+
+    def get_priority_css_class(self) -> str:
+        """English slug for CSS (priority-low, etc.); display labels are localized."""
+        return {1: "low", 2: "medium", 3: "high", 4: "urgent"}.get(self.priority, "medium")
 
 
 class PartTask(models.Model):

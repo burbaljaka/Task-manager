@@ -1,6 +1,7 @@
 from collections import Counter, defaultdict
 from collections.abc import Iterator
 import json
+import logging
 import re
 from django.contrib import messages
 from django.core.exceptions import ValidationError as DjangoValidationError
@@ -32,6 +33,8 @@ from django.utils import timezone
 from dateutil import relativedelta as monthdelta
 from calendar import monthrange
 import requests
+
+logger = logging.getLogger(__name__)
 
 
 def iter_all_tasks_in_tree(parent_tasks: list) -> Iterator[UserTask]:
@@ -175,7 +178,7 @@ def index(request):
 def special(request):
     # Remember to also set login url in settings.py!
     # LOGIN_URL = '/basic_app/user_login/'
-    return HttpResponse("You are logged in. Nice!")
+    return HttpResponse("Вы вошли в систему.")
 
 
 @login_required
@@ -268,11 +271,10 @@ def user_login(request):
             #                return render(request, 'basic_app/tasks.html', context)
             else:
                 # If account is not active:
-                return HttpResponse("Your account is not active.")
+                return HttpResponse("Учётная запись не активирована.")
         else:
-            print("Someone tried to login and failed.")
-            print("They used username: {} and password: {}".format(username, password))
-            return HttpResponse("Invalid login details supplied.")
+            logger.warning("Неудачная попытка входа для пользователя: %s", username)
+            return HttpResponse("Неверные имя пользователя или пароль.")
 
     else:
         # Nothing has been provided for username or password.
@@ -448,10 +450,10 @@ def user_tasks_view(request):
                     try:
                         parent_task = UserTask.objects.get(pk=parent_task.pk)
                         if parent_task.user != request.user:
-                            form.add_error('parent_task', 'Parent task must belong to the same user.')
+                            form.add_error('parent_task', 'Родительская задача должна принадлежать тому же пользователю.')
                             parent_task = None  # Don't use invalid parent
                     except UserTask.DoesNotExist:
-                        form.add_error('parent_task', 'Parent task does not exist.')
+                        form.add_error('parent_task', 'Родительская задача не найдена.')
                         parent_task = None
                 
                 if not form.errors:
@@ -554,16 +556,16 @@ def user_tasks_view(request):
             days_diff = (task.due_date - today).days
             if days_diff < 0:
                 task.due_date_class = 'due-date-overdue'
-                task.due_date_text = f"{task.due_date.strftime('%b %d')} ({abs(days_diff)}d ago)"
+                task.due_date_text = f"{task.due_date.strftime('%d.%m.%Y')} ({abs(days_diff)} дн. назад)"
             elif days_diff == 0:
                 task.due_date_class = 'due-date-today'
-                task.due_date_text = "Today"
+                task.due_date_text = "Сегодня"
             elif days_diff <= 3:
                 task.due_date_class = 'due-date-soon'
-                task.due_date_text = f"{days_diff}d left"
+                task.due_date_text = f"осталось {days_diff} дн."
             else:
                 task.due_date_class = 'due-date-normal'
-                task.due_date_text = task.due_date.strftime('%b %d')
+                task.due_date_text = task.due_date.strftime('%d.%m.%Y')
         else:
             task.due_date_class = 'due-date-none'
             task.due_date_text = None
@@ -648,7 +650,7 @@ def kanban_column_create(request):
     ensure_kanban_builtins(request.user)
     label = (request.POST.get("label") or "").strip()
     if not label:
-        messages.error(request, "Label is required.")
+        messages.error(request, "Укажите название колонки.")
         return redirect("basic_app:user_tasks_view")
     raw_key = (request.POST.get("key") or "").strip()
     if raw_key:
@@ -656,15 +658,15 @@ def kanban_column_create(request):
         key = re.sub(r"[^A-Z0-9_]", "_", key)
         key = re.sub(r"_+", "_", key).strip("_")[:64]
         if not key:
-            messages.error(request, "Invalid key.")
+            messages.error(request, "Недопустимый ключ колонки.")
             return redirect("basic_app:user_tasks_view")
     else:
         key = derive_key_from_label(label, request.user)
     if key in BUILTIN_KEYS:
-        messages.error(request, "This key is reserved for a built-in column.")
+        messages.error(request, "Этот ключ зарезервирован для встроенной колонки.")
         return redirect("basic_app:user_tasks_view")
     if KanbanColumnDefinition.objects.filter(user=request.user, key=key).exists():
-        messages.error(request, "A column with this key already exists.")
+        messages.error(request, "Колонка с таким ключом уже существует.")
         return redirect("basic_app:user_tasks_view")
     KanbanColumnDefinition.objects.create(
         user=request.user,
@@ -673,7 +675,7 @@ def kanban_column_create(request):
         sort_order=next_custom_sort_order(request.user),
         is_builtin=False,
     )
-    messages.success(request, "Column added.")
+    messages.success(request, "Колонка добавлена.")
     return redirect("basic_app:user_tasks_view")
 
 
@@ -683,14 +685,14 @@ def kanban_column_reorder(request):
     content_type = (request.content_type or "").split(";")[0].strip().lower()
     if content_type != "application/json":
         return JsonResponse(
-            {"ok": False, "error": "Content-Type must be application/json"},
+            {"ok": False, "error": "Требуется Content-Type: application/json"},
             status=400,
         )
     try:
         body = KanbanColumnReorderBody.model_validate_json(request.body)
     except (ValidationError, json.JSONDecodeError, ValueError):
         return JsonResponse(
-            {"ok": False, "error": "Invalid request body"},
+            {"ok": False, "error": "Некорректное тело запроса"},
             status=400,
         )
 
@@ -705,7 +707,7 @@ def kanban_column_reorder(request):
         return JsonResponse(
             {
                 "ok": False,
-                "error": "Column keys do not match the current board configuration.",
+                "error": "Ключи колонок не совпадают с текущей конфигурацией доски.",
                 "code": "columnKeysOutOfSync",
             },
             status=400,
@@ -726,14 +728,14 @@ def kanban_task_reorder(request):
     content_type = (request.content_type or "").split(";")[0].strip().lower()
     if content_type != "application/json":
         return JsonResponse(
-            {"ok": False, "error": "Content-Type must be application/json"},
+            {"ok": False, "error": "Требуется Content-Type: application/json"},
             status=400,
         )
     try:
         body = KanbanTaskReorderBody.model_validate_json(request.body)
     except (ValidationError, json.JSONDecodeError, ValueError):
         return JsonResponse(
-            {"ok": False, "error": "Invalid request body"},
+            {"ok": False, "error": "Некорректное тело запроса"},
             status=400,
         )
 
@@ -745,7 +747,7 @@ def kanban_task_reorder(request):
         return JsonResponse(
             {
                 "ok": False,
-                "error": "Task ids do not match the current board state.",
+                "error": "Идентификаторы задач не совпадают с текущим состоянием доски.",
                 "code": "taskIdsOutOfSync",
             },
             status=400,
@@ -763,7 +765,7 @@ def kanban_task_reorder(request):
         return JsonResponse(
             {
                 "ok": False,
-                "error": "Invalid status for one or more tasks.",
+                "error": "Недопустимый статус для одной или нескольких задач.",
                 "code": "invalidStatusTransition",
             },
             status=400,
@@ -773,47 +775,61 @@ def kanban_task_reorder(request):
 
 
 @login_required
-def task_detail_view(request, task_id: int):
-    task = get_object_or_404(UserTask, pk=task_id, user=request.user)
-    return render(request, "basic_app/task_detail.html", {"task": task})
-
-
 def reports(request):
     current_user_id = request.user.id
 
-    if request.method == 'GET':
-        if request.GET.get('period') == 'this_day':
-            parttasks = PartTask.objects.filter(user_id=current_user_id, date_start=datetime.date.today(), )
-            period = 'This day'
+    if request.method == "GET":
+        if request.GET.get("period") == "this_day":
+            parttasks = PartTask.objects.filter(
+                user_id=current_user_id, date_start=datetime.date.today()
+            )
+            period = "Сегодня"
 
-        elif request.GET.get('period') == 'last_day':
-            parttasks = PartTask.objects.filter(user_id=current_user_id,
-                                                date_start=datetime.date.today() - datetime.timedelta(days=1))
-            period = 'Last day'
+        elif request.GET.get("period") == "last_day":
+            parttasks = PartTask.objects.filter(
+                user_id=current_user_id,
+                date_start=datetime.date.today() - datetime.timedelta(days=1),
+            )
+            period = "Вчера"
 
-        elif request.GET.get('period') == '15_days':
-            parttasks = PartTask.objects.filter(user_id=current_user_id, date_start__range=(
-                datetime.date.today() - datetime.timedelta(days=15), datetime.date.today()))
-            period = 'Last 15 days'
+        elif request.GET.get("period") == "15_days":
+            parttasks = PartTask.objects.filter(
+                user_id=current_user_id,
+                date_start__range=(
+                    datetime.date.today() - datetime.timedelta(days=15),
+                    datetime.date.today(),
+                ),
+            )
+            period = "Последние 15 дней"
 
-        elif request.GET.get('period') == 'this_month':
-            parttasks = PartTask.objects.filter(user_id=current_user_id,
-                                                date_start__range=(datetime.date.today() - datetime.timedelta(
-                                                    days=(datetime.date.today().day - 1)), datetime.date.today()))
-            period = 'This month'
+        elif request.GET.get("period") == "this_month":
+            parttasks = PartTask.objects.filter(
+                user_id=current_user_id,
+                date_start__range=(
+                    datetime.date.today()
+                    - datetime.timedelta(days=(datetime.date.today().day - 1)),
+                    datetime.date.today(),
+                ),
+            )
+            period = "Текущий месяц"
 
-        elif request.GET.get('period') == 'last_month':
-            date_minus_month = datetime.date.today() - monthdelta.relativedelta(months=+ 1)
+        elif request.GET.get("period") == "last_month":
+            date_minus_month = datetime.date.today() - monthdelta.relativedelta(months=+1)
             month_length = monthrange(date_minus_month.year, date_minus_month.month)[1]
-            parttasks = PartTask.objects.filter(user_id=current_user_id, date_start__range=(
-                date_minus_month.replace(day=1), date_minus_month.replace(day=month_length)))
-            period = 'Last month'
+            parttasks = PartTask.objects.filter(
+                user_id=current_user_id,
+                date_start__range=(
+                    date_minus_month.replace(day=1),
+                    date_minus_month.replace(day=month_length),
+                ),
+            )
+            period = "Прошлый месяц"
 
         else:
             parttasks = PartTask.objects.none()
-            period = 'No period selected'
+            period = "Период не выбран"
 
-        show_all = request.GET.get('show', 'active') == 'all'
+        show_all = request.GET.get("show", "active") == "all"
         usertasks = UserTask.objects.filter(user_id=current_user_id)
         if not show_all:
             usertasks = usertasks.filter(to_show=1)
@@ -824,26 +840,46 @@ def reports(request):
                     usertask.timer += parttask.time_length
 
         context = {
-            'usertasks': usertasks,
-            'period': period,
-            'counter': len(usertasks),
-            'show_all': show_all
+            "usertasks": usertasks,
+            "period": period,
+            "counter": len(usertasks),
+            "show_all": show_all,
         }
 
-        return render(request, 'basic_app/report_page.html', context)
+        return render(request, "basic_app/report_page.html", context)
 
-    elif request.method == 'POST':
-        print(request)
+    elif request.method == "POST":
         form = ReturnTaskForm(request.POST)
         if form.is_valid():
-            name = form.cleaned_data['name']
-            to_show = form.cleaned_data['to_show']
-            usertask = UserTask.objects.get(name=name, user_id=current_user_id)
-            usertask.to_show = to_show
-            usertask.save()
+            name = form.cleaned_data["name"]
+            to_show = form.cleaned_data["to_show"]
+            matching_tasks = list(
+                UserTask.objects.filter(name=name, user_id=current_user_id).order_by(
+                    "id"
+                )
+            )
+            if not matching_tasks:
+                messages.error(
+                    request,
+                    "Задача с таким названием не найдена.",
+                )
+                return redirect(reverse("basic_app:reports"))
 
-            parttasks = PartTask.objects.filter(user_id=current_user_id, date_start=datetime.date.today())
-            period = 'This day'
+            target_task = matching_tasks[0]
+            if len(matching_tasks) > 1:
+                messages.warning(
+                    request,
+                    "Найдено несколько задач с одинаковым названием. "
+                    f"Обновлена задача №{target_task.id}.",
+                )
+
+            target_task.to_show = to_show
+            target_task.save()
+
+            parttasks = PartTask.objects.filter(
+                user_id=current_user_id, date_start=datetime.date.today()
+            )
+            period = "Сегодня"
 
             usertasks = UserTask.objects.filter(user_id=current_user_id)
             for usertask in usertasks:
@@ -853,12 +889,25 @@ def reports(request):
                         usertask.timer += parttask.time_length
 
             context = {
-                'usertasks': usertasks,
-                'period': period,
-                'counter': len(usertasks)
+                "usertasks": usertasks,
+                "period": period,
+                "counter": len(usertasks),
+                "show_all": False,
             }
 
-        return render(request, 'basic_app/report_page.html', context)
+            return render(request, "basic_app/report_page.html", context)
+
+        messages.error(
+            request,
+            "Не удалось обработать форму. Проверьте введённые данные.",
+        )
+        return redirect(reverse("basic_app:reports"))
+
+
+@login_required
+def task_detail_view(request, task_id: int):
+    task = get_object_or_404(UserTask, pk=task_id, user=request.user)
+    return render(request, "basic_app/task_detail.html", {"task": task})
 
 
 def base(request):

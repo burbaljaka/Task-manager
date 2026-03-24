@@ -2,7 +2,7 @@
 {% block body_block %}
 <div class="card shadow-sm mb-4">
   <div class="card-header bg-primary text-white d-flex flex-column flex-md-row justify-content-between align-items-center">
-    <h4 class="mb-2 mb-md-0">Reports</h4>
+    <h4 class="mb-2 mb-md-0">Отчёты</h4>
     <span class="badge bg-light text-primary">{{ period }}</span>
   </div>
   <div class="card-body">
@@ -10,36 +10,36 @@
     <div class="row mb-3 g-3">
       <div class="col-12 col-sm-6 col-md-4">
         <div class="p-3 bg-light rounded text-center h-100">
-          <div class="fw-bold fs-6 fs-md-5">Total Tasks</div>
+          <div class="fw-bold fs-6 fs-md-5">Всего задач</div>
           <div class="fs-5 fs-md-4">{{ usertasks|length }}</div>
         </div>
       </div>
       <div class="col-12 col-sm-6 col-md-4">
         <div class="p-3 bg-light rounded text-center h-100">
-          <div class="fw-bold fs-6 fs-md-5">Total Time</div>
+          <div class="fw-bold fs-6 fs-md-5">Всего времени</div>
           <div class="fs-5 fs-md-4" id="total-time">00:00:00</div>
         </div>
       </div>
       <div class="col-12 col-sm-12 col-md-4">
         <div class="p-3 bg-light rounded text-center h-100">
-          <div class="fw-bold fs-6 fs-md-5">Average Time/Task</div>
+          <div class="fw-bold fs-6 fs-md-5">Среднее время на задачу</div>
           <div class="fs-5 fs-md-4" id="avg-time">00:00:00</div>
         </div>
       </div>
     </div>
     <!-- Toggle buttons -->
     <div class="d-flex flex-column flex-sm-row justify-content-end mb-3 gap-2">
-      <a href="?period={{ period|urlencode }}&show=active" class="btn btn-sm{% if not show_all %} btn-primary{% else %} btn-outline-primary{% endif %}">Active tasks</a>
-      <a href="?period={{ period|urlencode }}&show=all" class="btn btn-sm{% if show_all %} btn-primary{% else %} btn-outline-primary{% endif %}">All tasks</a>
+      <a href="?period={{ period|urlencode }}&show=active" class="btn btn-sm{% if not show_all %} btn-primary{% else %} btn-outline-primary{% endif %}">Активные</a>
+      <a href="?period={{ period|urlencode }}&show=all" class="btn btn-sm{% if show_all %} btn-primary{% else %} btn-outline-primary{% endif %}">Все задачи</a>
     </div>
     <!-- Table -->
     <div class="table-responsive">
       <table class="table table-striped align-middle">
         <thead class="table-primary">
           <tr>
-            <th>Task name</th>
-            <th>Spent time</th>
-            <th>Action</th>
+            <th>Задача</th>
+            <th>Потрачено</th>
+            <th>Действие</th>
           </tr>
         </thead>
         <tbody>
@@ -52,7 +52,7 @@
                 <form action="{% url 'basic_app:reports' %}" method="POST" class="d-inline">{% csrf_token %}
                   <input type="hidden" name="name" value="{{ usertask.name }}">
                   <input type="hidden" name="to_show" value="{{ usertask.to_show }}">
-                  <button type="submit" class="btn btn-outline-danger btn-sm w-100 w-sm-auto">Return task</button>
+                  <button type="submit" class="btn btn-outline-danger btn-sm w-100 w-sm-auto">Вернуть задачу</button>
                 </form>
               {% endif %}
             </td>
@@ -96,9 +96,9 @@
   const chart = new Chart(ctx, {
     type: 'bar',
     data: {
-      labels: Array.from(document.querySelectorAll('.task-time')).map((_,i) => `Task ${i+1}`),
+      labels: Array.from(document.querySelectorAll('.task-time')).map((_,i) => `Задача ${i+1}`),
       datasets: [{
-        label: 'Time (minutes)',
+        label: 'Время (мин.)',
         data: Array.from(document.querySelectorAll('.task-time')).map(el => formatMinutes(parseInt(el.dataset.seconds, 10))),
         backgroundColor: 'rgba(13,110,253,0.5)',
         borderColor: 'rgba(13,110,253,1)',
@@ -126,18 +126,12 @@
           beginAtZero: true,
           title: {
             display: true,
-            text: 'Time (minutes)'
+            text: 'Время (мин.)'
           },
           ticks: {
             maxTicksLimit: 8
           }
         },
-        x: {
-          ticks: {
-            maxRotation: 45,
-            minRotation: 0
-          }
-        }
         x: {
           ticks: {
             maxRotation: 45,

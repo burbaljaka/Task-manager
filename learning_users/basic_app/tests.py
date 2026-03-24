@@ -4,10 +4,16 @@ import json
 from django.conf import settings
 from django.contrib.auth.models import User
 from django.forms.models import model_to_dict
+from django.contrib.messages import get_messages
 from django.test import Client, TestCase
 from django.urls import reverse
 
-from basic_app.kanban_utils import BUILTIN_ORDER_KEYS, ensure_kanban_builtins, status_css_slug
+from basic_app.kanban_utils import (
+    BUILTIN_ORDER_KEYS,
+    DEFAULT_BUILTIN_LABELS,
+    ensure_kanban_builtins,
+    status_css_slug,
+)
 from basic_app.admin import UserTaskAdminForm
 from basic_app.models import KanbanColumnDefinition, UserTask
 from basic_app.views import (
@@ -28,6 +34,17 @@ class KanbanHelpersTests(TestCase):
     def test_status_css_slug_matches_slug_rules(self):
         self.assertEqual(status_css_slug("IN_PROGRESS"), "in-progress")
         self.assertEqual(status_css_slug("MY__CUSTOM"), "my-custom")
+
+    def test_default_builtin_labels_are_russian(self):
+        self.assertEqual(
+            DEFAULT_BUILTIN_LABELS,
+            {
+                "TODO": "К выполнению",
+                "IN_PROGRESS": "В работе",
+                "COMPLETED": "Готово",
+                "CANCELLED": "Отменено",
+            },
+        )
 
     def test_iter_all_tasks_in_tree_dfs_order(self):
         user = User.objects.create_user(username="u1", password="pass12345")
@@ -467,6 +484,106 @@ class KanbanColumnDefinitionAdminTests(TestCase):
         )
 
 
+class LoginViewTests(TestCase):
+    def setUp(self):
+        self.client = Client()
+        User.objects.create_user(username="loguser", password="correctpass")
+
+    def test_failed_login_does_not_log_password(self):
+        url = reverse("basic_app:user_login")
+        secret = "wrong_secret_abc"
+        with self.assertLogs("basic_app.views", level="WARNING") as cm:
+            self.client.post(
+                url,
+                {"username": "loguser", "password": secret},
+            )
+        logged = "\n".join(cm.output)
+        self.assertNotIn(secret, logged)
+
+    def test_failed_login_unknown_user_does_not_log_password(self):
+        url = reverse("basic_app:user_login")
+        secret = "any_secret_xyz"
+        with self.assertLogs("basic_app.views", level="WARNING") as cm:
+            self.client.post(
+                url,
+                {"username": "no_such_user", "password": secret},
+            )
+        logged = "\n".join(cm.output)
+        self.assertNotIn(secret, logged)
+
+
+class ReportsViewTests(TestCase):
+    def setUp(self):
+        self.client = Client()
+        self.user = User.objects.create_user(username="reporter", password="pass12345")
+        self.client.login(username="reporter", password="pass12345")
+
+    def test_reports_anonymous_get_redirects_to_login(self):
+        self.client.logout()
+        url = reverse("basic_app:reports")
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(response.url.startswith(settings.LOGIN_URL))
+
+    def test_reports_anonymous_post_redirects_to_login(self):
+        self.client.logout()
+        url = reverse("basic_app:reports")
+        response = self.client.post(url, {"name": "x", "to_show": "1"})
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(response.url.startswith(settings.LOGIN_URL))
+
+    def test_reports_post_invalid_form_redirects_without_500(self):
+        url = reverse("basic_app:reports")
+        response = self.client.post(url, {}, follow=True)
+        self.assertEqual(response.status_code, 200)
+        msgs = [str(m) for m in get_messages(response.wsgi_request)]
+        self.assertTrue(any("форм" in m.lower() for m in msgs))
+
+    def test_reports_post_valid_updates_task_and_renders(self):
+        UserTask.objects.create(
+            user=self.user, name="rtask", status="TODO", to_show=0
+        )
+        url = reverse("basic_app:reports")
+        response = self.client.post(
+            url, {"name": "rtask", "to_show": "1"}, follow=False
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["period"], "Сегодня")
+        self.assertFalse(response.context["show_all"])
+        t = UserTask.objects.get(name="rtask", user=self.user)
+        self.assertEqual(t.to_show, 1)
+
+    def test_reports_post_unknown_task_name_redirects_without_500(self):
+        url = reverse("basic_app:reports")
+        response = self.client.post(
+            url, {"name": "нет_такой_задачи", "to_show": "1"}, follow=True
+        )
+        self.assertEqual(response.status_code, 200)
+        msgs = [str(m) for m in get_messages(response.wsgi_request)]
+        self.assertTrue(any("не найден" in m.lower() for m in msgs))
+        self.assertFalse(
+            UserTask.objects.filter(
+                user=self.user, name="нет_такой_задачи"
+            ).exists()
+        )
+
+    def test_reports_post_duplicate_task_names_updates_one_without_500(self):
+        UserTask.objects.create(user=self.user, name="dup", status="TODO", to_show=0)
+        UserTask.objects.create(user=self.user, name="dup", status="TODO", to_show=0)
+        url = reverse("basic_app:reports")
+        response = self.client.post(
+            url, {"name": "dup", "to_show": "1"}, follow=False
+        )
+        self.assertEqual(response.status_code, 200)
+        tasks = list(UserTask.objects.filter(user=self.user, name="dup").order_by("id"))
+        self.assertEqual(len(tasks), 2)
+        self.assertEqual(tasks[0].to_show, 1)
+        self.assertEqual(tasks[1].to_show, 0)
+        msgs = [str(m) for m in get_messages(response.wsgi_request)]
+        self.assertTrue(any("несколько" in m.lower() for m in msgs))
+        self.assertTrue(any(str(tasks[0].id) in m for m in msgs))
+
+
 class TaskDetailViewTests(TestCase):
     def setUp(self):
         self.client = Client()
@@ -488,7 +605,8 @@ class TaskDetailViewTests(TestCase):
         html = response.content.decode()
         self.assertIn(f"#{self.task.id}", html)
         self.assertIn("My task", html)
-        self.assertIn("In Progress", html)
+        self.assertIn("В работе", html)
+        self.assertIn("Средний", html)
         self.assertIn("Note", html)
 
     def test_other_user_gets_404(self):

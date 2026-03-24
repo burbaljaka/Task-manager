@@ -7,18 +7,18 @@ from datetime import date
 class UserForm(forms.ModelForm):
     password = forms.CharField(widget=forms.PasswordInput(attrs={
         'class': 'form-control form-control-lg',
-        'placeholder': 'Enter your password',
+        'placeholder': 'Введите пароль',
         'style': 'border-radius: 0 12px 12px 0; border: 2px solid #e3f0ff; border-left: none; padding: 0.75rem 1rem; transition: all 0.3s ease;'
     }))
     username = forms.CharField(widget=forms.TextInput(attrs={
         'class': 'form-control form-control-lg',
-        'placeholder': 'Enter your username',
+        'placeholder': 'Введите имя пользователя',
         'autofocus': True,
         'style': 'border-radius: 0 12px 12px 0; border: 2px solid #e3f0ff; border-left: none; padding: 0.75rem 1rem; transition: all 0.3s ease;'
     }))
     email = forms.EmailField(widget=forms.EmailInput(attrs={
         'class': 'form-control form-control-lg',
-        'placeholder': 'Enter your email',
+        'placeholder': 'Введите email',
         'style': 'border-radius: 0 12px 12px 0; border: 2px solid #e3f0ff; border-left: none; padding: 0.75rem 1rem; transition: all 0.3s ease;'
     }))
 
@@ -30,7 +30,7 @@ class UserForm(forms.ModelForm):
 class UserProfileInfoForm(forms.ModelForm):
     portfolio_site = forms.URLField(required=False, widget=forms.URLInput(attrs={
         'class': 'form-control form-control-lg',
-        'placeholder': 'https://yourportfolio.com',
+        'placeholder': 'https://example.com',
         'style': 'border-radius: 0 12px 12px 0; border: 2px solid #e3f0ff; border-left: none; padding: 0.75rem 1rem; transition: all 0.3s ease;'
     }))
     profile_pic = forms.ImageField(required=False, widget=forms.FileInput(attrs={
@@ -50,7 +50,7 @@ class UserTaskForm(forms.ModelForm):
     parent_task = forms.ModelChoiceField(
         queryset=UserTask.objects.none(),
         required=False,
-        empty_label="None (Top-level task)"
+        empty_label="Нет (корневая задача)"
     )
     
     class Meta():
@@ -97,7 +97,7 @@ class UserTaskForm(forms.ModelForm):
         name = cleaned_data.get('name', '').strip() if cleaned_data.get('name') else ''
         if (not task_id or task_id == 0) and not name:
             # New task - name is required
-            raise ValidationError({'name': 'Task name is required.'})
+            raise ValidationError({'name': 'Укажите название задачи.'})
         
         if parent_task and task_id:
             # Get the task instance if it exists
@@ -112,11 +112,11 @@ class UserTaskForm(forms.ModelForm):
                 if original_parent_id != new_parent_id:
                     # Ensure parent_task belongs to same user
                     if parent_task.user != current_task.user:
-                        raise ValidationError('Parent task must belong to the same user.')
+                        raise ValidationError('Родительская задача должна принадлежать тому же пользователю.')
                     
                     # Prevent circular references (only if parent_task changed)
                     if not parent_task.can_be_parent_of(current_task):
-                        raise ValidationError('Circular reference detected. A task cannot be its own ancestor.')
+                        raise ValidationError('Обнаружена циклическая ссылка. Задача не может быть своим предком.')
             except UserTask.DoesNotExist:
                 pass  # New task, validation will happen in model clean()
         
@@ -125,7 +125,7 @@ class UserTaskForm(forms.ModelForm):
     def clean_priority(self):
         priority = self.cleaned_data.get('priority')
         if priority and (priority < 1 or priority > 4):
-            raise ValidationError('Priority must be between 1 and 4.')
+            raise ValidationError('Приоритет должен быть от 1 до 4.')
         return priority
 
     def clean_status(self):
@@ -142,7 +142,7 @@ class UserTaskForm(forms.ModelForm):
         else:
             inst = UserTask(user=user)
         if status not in inst.allowed_status_keys():
-            raise ValidationError("Invalid status for this user.")
+            raise ValidationError("Недопустимый статус для этого пользователя.")
         return status
 
 class StartTaskForm(forms.ModelForm):
