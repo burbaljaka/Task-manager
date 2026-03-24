@@ -1,9 +1,11 @@
 from collections import defaultdict
 from collections.abc import Iterator
+import json
 import re
 from django.contrib import messages
 from django.shortcuts import get_object_or_404, redirect, render
 from basic_app.forms import UserForm, UserProfileInfoForm, UserTaskForm, StartTaskForm, StopTaskForm, ReturnTaskForm
+from basic_app.schemas import KanbanColumnReorderBody
 from basic_app.kanban_utils import (
     BUILTIN_KEYS,
     ensure_kanban_builtins,
@@ -14,9 +16,12 @@ from .models import KanbanColumnDefinition, UserTask, PartTask
 from django.utils.timezone import localtime, now
 # Extra Imports for the Login and Logout Capabilities
 from django.contrib.auth import authenticate, login, logout
-from django.http import HttpResponseRedirect, HttpResponse
+from django.db import transaction
+from django.http import HttpResponseRedirect, HttpResponse, JsonResponse
 from django.urls import reverse
 from django.contrib.auth.decorators import login_required
+from django.views.decorators.http import require_POST
+from pydantic import ValidationError
 from django.db.models import Prefetch
 import time
 from threading import Timer
@@ -519,6 +524,21 @@ def user_tasks_view(request):
         completed_for_done,
     )
 
+    def_keys_non_cancel = set(
+        KanbanColumnDefinition.objects.filter(user_id=current_user_id)
+        .exclude(key="CANCELLED")
+        .values_list("key", flat=True)
+    )
+    for col in kanban_columns:
+        col["is_reorderable"] = col["status"] in def_keys_non_cancel
+
+    initial_reorderable_column_keys = list(
+        KanbanColumnDefinition.objects.filter(user_id=current_user_id)
+        .exclude(key="CANCELLED")
+        .order_by("sort_order", "key")
+        .values_list("key", flat=True)
+    )
+
     status_options = [
         {"key": d.key, "label": d.label}
         for d in KanbanColumnDefinition.objects.filter(user_id=current_user_id).order_by(
@@ -538,6 +558,7 @@ def user_tasks_view(request):
         "today": today,
         "status_options": status_options,
         "builtin_status_keys": BUILTIN_KEYS,
+        "initial_reorderable_column_keys": initial_reorderable_column_keys,
     }
     return render(request, "basic_app/tasks.html", context)
 
@@ -576,6 +597,49 @@ def kanban_column_create(request):
     )
     messages.success(request, "Column added.")
     return redirect("basic_app:user_tasks_view")
+
+
+@login_required
+@require_POST
+def kanban_column_reorder(request):
+    content_type = (request.content_type or "").split(";")[0].strip().lower()
+    if content_type != "application/json":
+        return JsonResponse(
+            {"ok": False, "error": "Content-Type must be application/json"},
+            status=400,
+        )
+    try:
+        body = KanbanColumnReorderBody.model_validate_json(request.body)
+    except (ValidationError, json.JSONDecodeError, ValueError):
+        return JsonResponse(
+            {"ok": False, "error": "Invalid request body"},
+            status=400,
+        )
+
+    user = request.user
+    expected_keys = sorted(
+        KanbanColumnDefinition.objects.filter(user=user)
+        .exclude(key="CANCELLED")
+        .values_list("key", flat=True)
+    )
+    received = list(body.column_keys)
+    if len(received) != len(set(received)) or sorted(received) != expected_keys:
+        return JsonResponse(
+            {
+                "ok": False,
+                "error": "Column keys do not match the current board configuration.",
+                "code": "columnKeysOutOfSync",
+            },
+            status=400,
+        )
+
+    with transaction.atomic():
+        for index, key in enumerate(received):
+            KanbanColumnDefinition.objects.filter(user=user, key=key).update(
+                sort_order=index
+            )
+
+    return JsonResponse({"ok": True})
 
 
 @login_required

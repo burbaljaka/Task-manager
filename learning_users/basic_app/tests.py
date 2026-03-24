@@ -1,4 +1,5 @@
 import datetime
+import json
 
 from django.conf import settings
 from django.contrib.auth.models import User
@@ -142,6 +143,103 @@ class UserTasksKanbanViewTests(TestCase):
         self.assertTrue(
             KanbanColumnDefinition.objects.filter(user=self.user, key="QA").exists()
         )
+
+    def _csrf_header(self) -> dict[str, str]:
+        self.client.get(reverse("basic_app:user_tasks_view"))
+        token = self.client.cookies.get("csrftoken")
+        if not token:
+            return {}
+        return {"HTTP_X_CSRFTOKEN": token.value}
+
+    def test_kanban_column_reorder_updates_board_order(self):
+        ensure_kanban_builtins(self.user)
+        url = reverse("basic_app:kanban_column_reorder")
+        body = {"columnKeys": ["IN_PROGRESS", "TODO", "COMPLETED"]}
+        response = self.client.post(
+            url,
+            data=json.dumps(body),
+            content_type="application/json",
+            **self._csrf_header(),
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(json.loads(response.content.decode()), {"ok": True})
+        response_get = self.client.get(reverse("basic_app:user_tasks_view"))
+        statuses = [c["status"] for c in response_get.context["kanban_columns"]]
+        self.assertEqual(
+            statuses,
+            ["IN_PROGRESS", "TODO", "COMPLETED", "CANCELLED"],
+        )
+        orders = list(
+            KanbanColumnDefinition.objects.filter(user=self.user)
+            .exclude(key="CANCELLED")
+            .order_by("sort_order", "key")
+            .values_list("key", "sort_order")
+        )
+        self.assertEqual(
+            orders,
+            [("IN_PROGRESS", 0), ("TODO", 1), ("COMPLETED", 2)],
+        )
+
+    def test_kanban_column_reorder_out_of_sync_returns_code(self):
+        ensure_kanban_builtins(self.user)
+        KanbanColumnDefinition.objects.create(
+            user=self.user,
+            key="EXTRA",
+            label="Extra",
+            sort_order=5,
+            is_builtin=False,
+        )
+        url = reverse("basic_app:kanban_column_reorder")
+        body = {"columnKeys": ["IN_PROGRESS", "TODO", "COMPLETED"]}
+        response = self.client.post(
+            url,
+            data=json.dumps(body),
+            content_type="application/json",
+            **self._csrf_header(),
+        )
+        self.assertEqual(response.status_code, 400)
+        payload = json.loads(response.content.decode())
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["code"], "columnKeysOutOfSync")
+
+    def test_kanban_column_reorder_rejects_non_json_content_type(self):
+        ensure_kanban_builtins(self.user)
+        url = reverse("basic_app:kanban_column_reorder")
+        response = self.client.post(
+            url,
+            data={"columnKeys": ["TODO"]},
+            **self._csrf_header(),
+        )
+        self.assertEqual(response.status_code, 400)
+
+    def test_kanban_column_reorder_rejects_invalid_json(self):
+        ensure_kanban_builtins(self.user)
+        url = reverse("basic_app:kanban_column_reorder")
+        response = self.client.post(
+            url,
+            data="{not json",
+            content_type="application/json",
+            **self._csrf_header(),
+        )
+        self.assertEqual(response.status_code, 400)
+
+    def test_kanban_column_reorder_anonymous_redirects_to_login(self):
+        ensure_kanban_builtins(self.user)
+        url = reverse("basic_app:kanban_column_reorder")
+        anon = Client()
+        response = anon.post(
+            url,
+            data=json.dumps({"columnKeys": ["TODO", "IN_PROGRESS", "COMPLETED"]}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(response.url.startswith(settings.LOGIN_URL))
+
+    def test_user_tasks_view_includes_initial_reorderable_column_keys(self):
+        ensure_kanban_builtins(self.user)
+        response = self.client.get(reverse("basic_app:user_tasks_view"))
+        keys = response.context["initial_reorderable_column_keys"]
+        self.assertEqual(keys, ["TODO", "IN_PROGRESS", "COMPLETED"])
 
     def test_kanban_board_does_not_duplicate_subtask_dom_nodes(self):
         parent = UserTask.objects.create(

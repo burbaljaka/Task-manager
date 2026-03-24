@@ -4,6 +4,8 @@ FROM python:3.9-slim
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
+# Reduce flaky CI/build failures when PyPI is slow (ReadTimeoutError on large wheels).
+ENV PIP_DEFAULT_TIMEOUT=300
 
 # Set work directory
 WORKDIR /app
@@ -17,7 +19,7 @@ RUN apt-get update \
 
 # Install Python dependencies
 COPY learning_users/requirements.txt /app/
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --retries 15 --default-timeout=300 --prefer-binary -r requirements.txt
 
 # Copy project
 COPY learning_users/ /app/

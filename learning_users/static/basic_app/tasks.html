@@ -11,10 +11,40 @@
     <h3 class="mb-0" style="color: #4a6fa5; font-size: 1.25rem; font-weight: 600;">Active Tasks</h3>
     <button type="button" class="btn btn-outline-primary btn-sm rounded-pill" data-bs-toggle="modal" data-bs-target="#addKanbanColumnModal">+ Add column</button>
   </div>
-  <p class="text-muted small mb-3">Organized by status — change status using each card&apos;s controls; drag-and-drop between columns is not available yet.</p>
-  <div class="kanban-board">
+  <p class="text-muted small mb-3" id="kanban-board-help">Колонки доски (настроенные в определениях колонок) можно менять местами, перетаскивая за ручку слева от названия. Порядок карточек между колонками по-прежнему меняется через поля на карточке, не перетаскиванием.</p>
+  {{ initial_reorderable_column_keys|json_script:"kanban-initial-reorderable-keys" }}
+  <div class="kanban-board" data-kanban-reorder-url="{% url 'basic_app:kanban_column_reorder' %}">
+    <div class="kanban-board-reorderable" aria-label="Настроенные колонки доски">
     {% for column in kanban_columns %}
-      <div class="kanban-column" data-kanban-status="{{ column.status }}">
+      {% if column.is_reorderable %}
+      <div class="kanban-column" data-kanban-status="{{ column.status }}" data-kanban-reorderable="1">
+        <div class="kanban-column-header">
+          <button type="button" class="btn btn-link p-0 text-secondary kanban-column-drag-handle" aria-label="Переместить колонку" title="Перетащите, чтобы изменить порядок настроенных колонок" tabindex="0">&#8942;&#8942;</button>
+          <span class="kanban-column-title">{{ column.label }}</span>
+          <span class="kanban-column-count badge bg-secondary">{{ column.tasks|length }}</span>
+        </div>
+        <div class="kanban-column-body">
+          {% for task in column.tasks %}
+            {% if task.parent_task_id %}
+              {% with level=1 %}
+                {% include "basic_app/_task_item.html" %}
+              {% endwith %}
+            {% else %}
+              {% with level=0 %}
+                {% include "basic_app/_task_item.html" %}
+              {% endwith %}
+            {% endif %}
+          {% empty %}
+            <p class="text-muted small mb-0 kanban-empty-placeholder">No tasks</p>
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
+    {% endfor %}
+    </div>
+    {% for column in kanban_columns %}
+      {% if not column.is_reorderable %}
+      <div class="kanban-column" data-kanban-status="{{ column.status }}"{% if column.status == "CANCELLED" %} data-kanban-fixed="1"{% endif %}>
         <div class="kanban-column-header">
           <span class="kanban-column-title">{{ column.label }}</span>
           <span class="kanban-column-count badge bg-secondary">{{ column.tasks|length }}</span>
@@ -35,6 +65,7 @@
           {% endfor %}
         </div>
       </div>
+      {% endif %}
     {% endfor %}
   </div>
 </div>
@@ -131,6 +162,15 @@
     padding-bottom: 0.25rem;
   }
 
+  .kanban-board-reorderable {
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 0.75rem;
+    align-items: flex-start;
+    flex: 0 0 auto;
+    min-width: 0;
+  }
+
   .kanban-column {
     flex: 1 0 min(320px, 100%);
     min-width: 260px;
@@ -156,6 +196,24 @@
   .kanban-column-title {
     flex: 1;
     min-width: 0;
+  }
+
+  .kanban-column-drag-handle {
+    cursor: grab;
+    flex-shrink: 0;
+    line-height: 1;
+    user-select: none;
+    text-decoration: none !important;
+    font-size: 1rem;
+    letter-spacing: -0.1em;
+  }
+
+  .kanban-column-drag-handle:active {
+    cursor: grabbing;
+  }
+
+  .kanban-column--dragging {
+    opacity: 0.92;
   }
 
   .kanban-column-count {
@@ -656,8 +714,115 @@
     }
   </style>
 
+  <!-- SortableJS 1.15.3 (pinned; see PR decision locks) -->
+  <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.3/Sortable.min.js" crossorigin="anonymous"></script>
+
   <script type="text/javascript">
   function pad(val) { return val > 9 ? val : "0" + val; }
+
+  function getCookie(name) {
+    var cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+      var cookies = document.cookie.split(';');
+      for (var i = 0; i < cookies.length; i++) {
+        var cookie = cookies[i].trim();
+        if (cookie.substring(0, name.length + 1) === (name + '=')) {
+          cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+          break;
+        }
+      }
+    }
+    return cookieValue;
+  }
+
+  function initKanbanColumnSortable() {
+    var board = document.querySelector('.kanban-board');
+    var reorderEl = document.querySelector('.kanban-board-reorderable');
+    if (!board || !reorderEl) return;
+    var postUrl = board.getAttribute('data-kanban-reorder-url');
+    if (!postUrl) return;
+    var jsonEl = document.getElementById('kanban-initial-reorderable-keys');
+    var lastPersisted = [];
+    try {
+      lastPersisted = jsonEl ? JSON.parse(jsonEl.textContent) : [];
+    } catch (e) {
+      lastPersisted = [];
+    }
+    var domKeys = [];
+    reorderEl.querySelectorAll('.kanban-column[data-kanban-reorderable]').forEach(function (el) {
+      domKeys.push(el.getAttribute('data-kanban-status'));
+    });
+    var baselineOk = domKeys.length === lastPersisted.length;
+    if (baselineOk) {
+      for (var b = 0; b < domKeys.length; b++) {
+        if (domKeys[b] !== lastPersisted[b]) { baselineOk = false; break; }
+      }
+    }
+    if (!baselineOk && typeof console !== 'undefined' && console.warn) {
+      console.warn('Kanban SSR baseline vs DOM mismatch', { domKeys: domKeys, lastPersisted: lastPersisted });
+    }
+    var drags = reorderEl.querySelectorAll('.kanban-column[data-kanban-reorderable]');
+    if (drags.length < 2) return;
+    if (typeof Sortable === 'undefined') return;
+    try {
+      Sortable.create(reorderEl, {
+        animation: 150,
+        handle: '.kanban-column-drag-handle',
+        draggable: '.kanban-column[data-kanban-reorderable]',
+        delayOnTouchOnly: true,
+        delay: 120,
+        touchStartThreshold: 5,
+        onStart: function (evt) {
+          if (evt.item && evt.item.classList) evt.item.classList.add('kanban-column--dragging');
+        },
+        onEnd: function (evt) {
+          if (evt.item && evt.item.classList) evt.item.classList.remove('kanban-column--dragging');
+          var keys = [];
+          reorderEl.querySelectorAll('.kanban-column[data-kanban-reorderable]').forEach(function (el) {
+            keys.push(el.getAttribute('data-kanban-status'));
+          });
+          var unchanged = keys.length === lastPersisted.length;
+          if (unchanged) {
+            for (var i = 0; i < keys.length; i++) {
+              if (keys[i] !== lastPersisted[i]) { unchanged = false; break; }
+            }
+          }
+          if (unchanged) return;
+          var csrftoken = getCookie('csrftoken');
+          fetch(postUrl, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-CSRFToken': csrftoken || ''
+            },
+            body: JSON.stringify({ columnKeys: keys })
+          }).then(function (r) {
+            return r.text().then(function (text) {
+              var j = null;
+              try { j = text ? JSON.parse(text) : null; } catch (e) { j = null; }
+              return { ok: r.ok, status: r.status, body: j };
+            });
+          }).then(function (res) {
+            if (res.ok && res.body && res.body.ok === true) {
+              lastPersisted = keys.slice();
+              return;
+            }
+            var msg = (res.body && res.body.error) ? res.body.error : 'Не удалось сохранить порядок колонок';
+            alert(msg);
+            window.location.reload();
+          }).catch(function () {
+            alert('Сетевая ошибка при сохранении порядка колонок');
+            window.location.reload();
+          });
+        }
+      });
+    } catch (e) {
+      if (typeof console !== 'undefined' && console.warn) {
+        console.warn('Kanban Sortable init failed', e);
+      }
+    }
+  }
 
   function statusCssSlug(value) {
     var s = (value || '').toLowerCase();
@@ -677,6 +842,7 @@
 
   document.addEventListener('DOMContentLoaded', function() {
     initializeTasks();
+    initKanbanColumnSortable();
   });
 
   function initializeTasks() {

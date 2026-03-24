@@ -14,6 +14,11 @@ urlpatterns=[
         views.kanban_column_create,
         name='kanban_column_create',
     ),
+    path(
+        'tasks/kanban-columns/reorder/',
+        views.kanban_column_reorder,
+        name='kanban_column_reorder',
+    ),
     path('tasks/<int:task_id>/', views.task_detail_view, name='task_detail'),
     path('reports/', views.reports, name = 'reports')
 
