@@ -9,11 +9,20 @@
 <div class="tasks-section mb-4">
   <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
     <h3 class="mb-0" style="color: #4a6fa5; font-size: 1.25rem; font-weight: 600;">Активные задачи</h3>
-    <button type="button" class="btn btn-outline-primary btn-sm rounded-pill" data-bs-toggle="modal" data-bs-target="#addKanbanColumnModal">+ Добавить колонку</button>
+    <div class="d-flex flex-wrap align-items-center gap-2">
+      <label class="mb-0 small text-muted" for="board-scope-select">Доска</label>
+      <select id="board-scope-select" class="form-select form-select-sm" style="width: auto; min-width: 12rem;" onchange="if (this.value) { window.location = '{% url 'basic_app:user_tasks_view' %}?team=' + encodeURIComponent(this.value); } else { window.location = '{% url 'basic_app:user_tasks_view' %}'; }">
+        <option value=""{% if not board_team_id %} selected{% endif %}>Личная доска</option>
+        {% for t in user_teams %}
+        <option value="{{ t.id }}"{% if board_team_id == t.id %} selected{% endif %}>{{ t.name }}</option>
+        {% endfor %}
+      </select>
+      <button type="button" class="btn btn-outline-primary btn-sm rounded-pill" data-bs-toggle="modal" data-bs-target="#addKanbanColumnModal">+ Добавить колонку</button>
+    </div>
   </div>
   <p class="text-muted small mb-3" id="kanban-board-help">Колонки доски (настроенные в определениях колонок) можно менять местами, перетаскивая за ручку слева от названия. Порядок карточек внутри колонки и между колонками задаётся перетаскиванием карточки за ручку слева от номера задачи; при необходимости статус и срок по-прежнему можно менять полями на карточке.</p>
   {{ initial_reorderable_column_keys|json_script:"kanban-initial-reorderable-keys" }}
-  <div class="kanban-board" data-kanban-reorder-url="{% url 'basic_app:kanban_column_reorder' %}" data-kanban-task-reorder-url="{% url 'basic_app:kanban_task_reorder' %}">
+  <div class="kanban-board" data-kanban-reorder-url="{% url 'basic_app:kanban_column_reorder' %}" data-kanban-task-reorder-url="{% url 'basic_app:kanban_task_reorder' %}" data-board-team="{% if board_team_id %}{{ board_team_id }}{% endif %}">
     <div class="kanban-board-reorderable" aria-label="Настроенные колонки доски">
     {% for column in kanban_columns %}
       {% if column.is_reorderable %}
@@ -75,6 +84,7 @@
       <div class="modal-content">
         <form action="{% url 'basic_app:kanban_column_create' %}" method="post">
           {% csrf_token %}
+          {% if board_team_id %}<input type="hidden" name="board_team" value="{{ board_team_id }}">{% endif %}
           <div class="modal-header">
             <h5 class="modal-title" id="addKanbanColumnLabel">Новая колонка</h5>
             <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button>
@@ -118,8 +128,9 @@
 
   <button type="button" id="create_button" onclick="create_new_task()" class="btn btn-outline-success btn-sm rounded-pill mb-3" style="display:block;">Создать задачу</button>
 
-  <form action="{% url 'basic_app:user_tasks_view' %}" method="POST" style="display:none" id="create_new_task_form" autocomplete="off" onsubmit="return validateNewTaskForm(event)">
+  <form action="{% url 'basic_app:user_tasks_view' %}{% if board_team_id %}?team={{ board_team_id }}{% endif %}" method="POST" style="display:none" id="create_new_task_form" autocomplete="off" onsubmit="return validateNewTaskForm(event)">
     {% csrf_token %}
+    {% if board_team_id %}<input type="hidden" name="board_team" value="{{ board_team_id }}">{% endif %}
   <div class="card shadow-sm mb-3 border-0 bg-white">
     <div class="card-body p-3">
       <div class="task-metadata-bar mb-2">
@@ -132,6 +143,14 @@
           <option value="{{ opt.key }}">{{ opt.label }}</option>
           {% endfor %}
         </select>
+        {% if is_team_board %}
+        <select name="assignee" id="new_task_assignee" class="form-control form-control-sm d-inline-block" style="width:auto; max-width: 10rem;" title="Исполнитель">
+          <option value="">Без исполнителя</option>
+          {% for m in team_member_options %}
+          <option value="{{ m.id }}">{{ m.username }}</option>
+          {% endfor %}
+        </select>
+        {% endif %}
         <input type="date" name="due_date" id="new_task_due_date" class="form-control form-control-sm d-inline-block" style="width:auto;">
         <input type="number" name="priority" id="new_task_priority" value="2" min="1" max="4" style="display:none">
       </div>
@@ -761,6 +780,14 @@
     return cookieValue;
   }
 
+  function kanbanUrlWithTeam(url) {
+    var board = document.querySelector('.kanban-board');
+    var team = board && board.getAttribute('data-board-team');
+    if (!team) return url;
+    var sep = url.indexOf('?') >= 0 ? '&' : '?';
+    return url + sep + 'team=' + encodeURIComponent(team);
+  }
+
   function initKanbanColumnSortable() {
     var board = document.querySelector('.kanban-board');
     var reorderEl = document.querySelector('.kanban-board-reorderable');
@@ -815,7 +842,7 @@
           }
           if (unchanged) return;
           var csrftoken = getCookie('csrftoken');
-          fetch(postUrl, {
+          fetch(kanbanUrlWithTeam(postUrl), {
             method: 'POST',
             credentials: 'same-origin',
             headers: {
@@ -902,7 +929,7 @@
       taskIdsByStatus[st] = ids;
     });
     var csrftoken = getCookie('csrftoken');
-    fetch(postUrl, {
+    fetch(kanbanUrlWithTeam(postUrl), {
       method: 'POST',
       credentials: 'same-origin',
       headers: {

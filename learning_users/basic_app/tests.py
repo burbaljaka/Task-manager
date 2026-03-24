@@ -1,26 +1,36 @@
 import datetime
 import json
+from unittest.mock import patch
 
 from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.contrib.auth.models import User
 from django.forms.models import model_to_dict
 from django.contrib.messages import get_messages
 from django.test import Client, TestCase
 from django.urls import reverse
 
+from basic_app.board_scope import BoardScope
+from basic_app.kanban_board import (
+    get_task_hierarchy_for_scope,
+    iter_all_tasks_in_tree,
+    sort_tasks_for_kanban_column,
+)
 from basic_app.kanban_utils import (
     BUILTIN_ORDER_KEYS,
     DEFAULT_BUILTIN_LABELS,
     ensure_kanban_builtins,
+    ensure_kanban_builtins_for_team,
     status_css_slug,
 )
 from basic_app.admin import UserTaskAdminForm
-from basic_app.models import KanbanColumnDefinition, UserTask
-from basic_app.views import (
-    expected_task_ids_by_status_for_user,
-    iter_all_tasks_in_tree,
-    sort_tasks_for_kanban_column,
+from basic_app.models import (
+    KanbanColumnDefinition,
+    TaskTeam,
+    TaskTeamMembership,
+    UserTask,
 )
+from basic_app.views import expected_task_ids_by_status_for_user
 
 
 class KanbanHelpersTests(TestCase):
@@ -65,6 +75,23 @@ class KanbanHelpersTests(TestCase):
         t3 = UserTask.objects.create(user=user, name="c", status="TODO", due_date=None)
         sorted_tasks = sort_tasks_for_kanban_column([t1, t2, t3])
         self.assertEqual([t.id for t in sorted_tasks], [t2.id, t1.id, t3.id])
+
+    def test_get_task_hierarchy_promotes_subtask_when_parent_excluded_completed(self):
+        user = User.objects.create_user(username="hier", password="pass12345")
+        parent = UserTask.objects.create(
+            user=user,
+            name="P",
+            status="COMPLETED",
+            completion_date=datetime.date.today(),
+        )
+        child = UserTask.objects.create(
+            user=user, name="C", status="TODO", parent_task=parent
+        )
+        roots = get_task_hierarchy_for_scope(
+            BoardScope(user_id=user.id, team_id=None), exclude_completed=True
+        )
+        root_ids = {t.id for t in roots}
+        self.assertIn(child.id, root_ids)
 
     def test_sort_tasks_for_kanban_column_orders_by_kanban_position_first(self):
         user = User.objects.create_user(username="u3", password="pass12345")
@@ -374,6 +401,51 @@ class UserTasksKanbanViewTests(TestCase):
         self.assertEqual(response.status_code, 302)
         self.assertTrue(response.url.startswith(settings.LOGIN_URL))
 
+    def test_kanban_task_reorder_wrong_board_scope_returns_board_scope_mismatch(self):
+        ensure_kanban_builtins(self.user)
+        team = TaskTeam.objects.create(name="ReorderT")
+        TaskTeamMembership.objects.create(team=team, user=self.user)
+        ensure_kanban_builtins_for_team(team)
+        team_task = UserTask.objects.create(
+            user=self.user, name="team t", status="TODO", team=team
+        )
+        personal_expected = expected_task_ids_by_status_for_user(self.user.id)
+        merged = {k: list(v) for k, v in personal_expected.items()}
+        merged["TODO"] = list(merged["TODO"]) + [team_task.id]
+        body = {"taskIdsByStatus": merged}
+        url = reverse("basic_app:kanban_task_reorder")
+        with patch(
+            "basic_app.views.expected_task_ids_by_status_for_scope", return_value=merged
+        ):
+            response = self.client.post(
+                url,
+                data=json.dumps(body),
+                content_type="application/json",
+                **self._csrf_header(),
+            )
+        self.assertEqual(response.status_code, 400)
+        payload = json.loads(response.content.decode())
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["code"], "boardScopeMismatch")
+
+    def test_kanban_task_reorder_access_denied_returns_access_denied(self):
+        ensure_kanban_builtins(self.user)
+        UserTask.objects.create(user=self.user, name="t", status="TODO")
+        expected = expected_task_ids_by_status_for_user(self.user.id)
+        body = {"taskIdsByStatus": {k: list(v) for k, v in expected.items()}}
+        url = reverse("basic_app:kanban_task_reorder")
+        with patch("basic_app.views.user_can_access_task", return_value=False):
+            response = self.client.post(
+                url,
+                data=json.dumps(body),
+                content_type="application/json",
+                **self._csrf_header(),
+            )
+        self.assertEqual(response.status_code, 403)
+        payload = json.loads(response.content.decode())
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["code"], "accessDenied")
+
     def test_user_tasks_view_includes_initial_reorderable_column_keys(self):
         ensure_kanban_builtins(self.user)
         response = self.client.get(reverse("basic_app:user_tasks_view"))
@@ -620,3 +692,91 @@ class TaskDetailViewTests(TestCase):
         response = self.client.get(url)
         self.assertEqual(response.status_code, 302)
         self.assertTrue(response.url.startswith(settings.LOGIN_URL))
+
+    def test_team_member_can_view_team_task_detail(self):
+        team = TaskTeam.objects.create(name="T1")
+        member = User.objects.create_user(username="member", password="pass12345")
+        TaskTeamMembership.objects.create(team=team, user=member)
+        team_task = UserTask.objects.create(
+            user=self.owner,
+            name="Team t",
+            status="TODO",
+            team=team,
+        )
+        self.client.login(username="member", password="pass12345")
+        url = reverse("basic_app:task_detail", kwargs={"task_id": team_task.id})
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["task"].id, team_task.id)
+
+
+class TaskTeamModelTests(TestCase):
+    def test_kanban_column_xor_requires_user_or_team(self):
+        user = User.objects.create_user(username="xor", password="pass12345")
+        team = TaskTeam.objects.create(name="TX")
+        col = KanbanColumnDefinition.objects.create(
+            user=user, team=None, key="K", label="L", sort_order=1, is_builtin=False
+        )
+        col.team = team
+        with self.assertRaises(ValidationError):
+            col.full_clean()
+
+    def test_assignee_must_be_team_member(self):
+        owner = User.objects.create_user(username="o", password="pass12345")
+        outsider = User.objects.create_user(username="out", password="pass12345")
+        team = TaskTeam.objects.create(name="T")
+        TaskTeamMembership.objects.create(team=team, user=owner)
+        t = UserTask(user=owner, team=team, name="x", assignee=outsider)
+        with self.assertRaises(ValidationError):
+            t.full_clean()
+
+
+class TeamBoardViewTests(TestCase):
+    def setUp(self):
+        self.client = Client()
+        self.user = User.objects.create_user(username="u", password="pass12345")
+        self.client.login(username="u", password="pass12345")
+        self.team = TaskTeam.objects.create(name="Alpha")
+        TaskTeamMembership.objects.create(team=self.team, user=self.user)
+
+    def test_invalid_team_param_redirects_with_message(self):
+        response = self.client.get(
+            reverse("basic_app:user_tasks_view") + "?team=99999",
+            follow=True,
+        )
+        self.assertEqual(response.status_code, 200)
+        msgs = [str(m) for m in get_messages(response.wsgi_request)]
+        self.assertTrue(any("не найден" in m.lower() for m in msgs))
+
+    def test_non_member_redirects_from_team_board(self):
+        other = User.objects.create_user(username="nm", password="pass12345")
+        self.client.login(username="nm", password="pass12345")
+        response = self.client.get(
+            reverse("basic_app:user_tasks_view") + f"?team={self.team.id}",
+            follow=True,
+        )
+        self.assertEqual(response.status_code, 200)
+        msgs = [str(m) for m in get_messages(response.wsgi_request)]
+        self.assertTrue(any("доступ" in m.lower() for m in msgs))
+
+
+class TaskTeamAdminPermissionTests(TestCase):
+    def setUp(self):
+        self.client = Client()
+        self.staff = User.objects.create_user(username="staff", password="p", is_staff=True)
+        self.superuser = User.objects.create_superuser(
+            username="su", password="p", email="su@example.com"
+        )
+
+    def test_staff_cannot_see_task_team_in_admin(self):
+        self.client.login(username="staff", password="p")
+        url = reverse("admin:index")
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, "Task teams")
+
+    def test_superuser_sees_task_team_admin(self):
+        self.client.login(username="su", password="p")
+        url = reverse("admin:basic_app_taskteam_changelist")
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, 200)

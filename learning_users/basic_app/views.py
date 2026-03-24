@@ -1,31 +1,53 @@
-from collections import Counter, defaultdict
-from collections.abc import Iterator
+from collections import Counter
 import json
 import logging
 import re
 from django.contrib import messages
-from django.core.exceptions import ValidationError as DjangoValidationError
+from django.core.exceptions import PermissionDenied, ValidationError as DjangoValidationError
 from django.shortcuts import get_object_or_404, redirect, render
 from basic_app.forms import UserForm, UserProfileInfoForm, UserTaskForm, StartTaskForm, StopTaskForm, ReturnTaskForm
 from basic_app.schemas import KanbanColumnReorderBody, KanbanTaskReorderBody
+from basic_app.board_scope import BoardScope
+from basic_app.kanban_board import (
+    build_kanban_columns_for_scope,
+    expected_task_ids_by_status_for_scope,
+    flat_tasks_for_timer_and_counter,
+    gather_kanban_board_inputs as gather_kanban_board_inputs_for_scope,
+    iter_all_tasks_in_tree,
+    next_kanban_position_for_scope,
+    resolve_board_scope,
+    board_scope_from_request_query,
+    update_overdue_priorities_for_scope,
+    user_can_access_task,
+    visible_team_tasks_queryset,
+)
 from basic_app.kanban_utils import (
     BUILTIN_KEYS,
     ensure_kanban_builtins,
+    ensure_kanban_builtins_for_team,
     derive_key_from_label,
+    derive_key_from_label_for_team,
     next_custom_sort_order,
+    next_custom_sort_order_for_team,
 )
-from .models import KanbanColumnDefinition, UserTask, PartTask
+from .models import (
+    KanbanColumnDefinition,
+    PartTask,
+    TaskTeam,
+    TaskTeamMembership,
+    UserTask,
+)
 from django.utils.timezone import localtime, now
 # Extra Imports for the Login and Logout Capabilities
 from django.contrib.auth import authenticate, login, logout
+from django.contrib.auth.models import User
 from django.db import transaction
-from django.db.models import Max
-from django.http import HttpResponseRedirect, HttpResponse, JsonResponse
+from django.db.models import Q
+from django.http import Http404, HttpResponseRedirect, HttpResponse, JsonResponse
 from django.urls import reverse
 from django.contrib.auth.decorators import login_required
 from django.views.decorators.http import require_POST
 from pydantic import ValidationError
-from django.db.models import Prefetch
 import time
 from threading import Timer
 import datetime
@@ -37,64 +59,14 @@ import requests
 logger = logging.getLogger(__name__)
 
 
-def iter_all_tasks_in_tree(parent_tasks: list) -> Iterator[UserTask]:
-    """Depth-first traversal of task hierarchy; yields each node once."""
-    for task in parent_tasks:
-        yield task
-        subtasks = getattr(task, "subtasks_list", None) or []
-        if subtasks:
-            yield from iter_all_tasks_in_tree(subtasks)
-
-
-def sort_tasks_for_kanban_column(tasks: list[UserTask]) -> list[UserTask]:
-    return sorted(
-        tasks,
-        key=lambda t: (
-            t.kanban_position,
-            t.due_date is None,
-            t.due_date or datetime.date.min,
-            t.id,
-        ),
-    )
-
-
 def gather_kanban_board_inputs(user_id: int) -> tuple[list, list[UserTask], list[UserTask]]:
-    parent_tasks = get_task_hierarchy(user_id)
-    tree_ids = {t.id for t in iter_all_tasks_in_tree(parent_tasks)}
-    non_completed_flat = list(
-        UserTask.objects.filter(user_id=user_id, to_show=1)
-        .exclude(status="COMPLETED")
-        .select_related("parent_task")
-    )
-    orphans: list[UserTask] = []
-    for task in non_completed_flat:
-        if task.id not in tree_ids:
-            task.subtasks_list = []
-            orphans.append(task)
-    completed_for_done = list(
-        UserTask.objects.filter(
-            user_id=user_id,
-            to_show=1,
-            status="COMPLETED",
-        ).select_related("parent_task")
-    )
-    return parent_tasks, orphans, completed_for_done
+    """Personal-board helper for tests; delegates to scoped gather."""
+    scope = BoardScope(user_id=user_id, team_id=None)
+    return gather_kanban_board_inputs_for_scope(scope)
 
 
 def expected_task_ids_by_status_for_user(user_id: int) -> dict[str, list[int]]:
-    parent_tasks, orphans, completed_for_done = gather_kanban_board_inputs(user_id)
-    kanban_columns = build_kanban_columns_for_user(
-        user_id,
-        parent_tasks,
-        orphans,
-        completed_for_done,
-    )
-    out: dict[str, list[int]] = {}
-    for col in kanban_columns:
-        if col["status"] == "CANCELLED":
-            continue
-        out[col["status"]] = [t.id for t in col["tasks"]]
-    return out
+    return expected_task_ids_by_status_for_scope(BoardScope(user_id=user_id, team_id=None))
 
 
 def task_snapshot_matches_expected(
@@ -114,60 +86,6 @@ def task_snapshot_matches_expected(
         exp_union.update(expected[k])
         rec_union.update(received[k])
     return exp_union == rec_union
-
-
-def next_kanban_position_for_user_status(user_id: int, status: str) -> int:
-    agg = (
-        UserTask.objects.filter(user_id=user_id, to_show=1, status=status).aggregate(
-            m=Max("kanban_position")
-        )
-    ).get("m")
-    return 0 if agg is None else int(agg) + 1
-
-
-def build_kanban_columns_for_user(
-    user_id: int,
-    parent_tasks: list,
-    orphans: list[UserTask],
-    completed_for_done: list[UserTask],
-) -> list[dict]:
-    """DB-driven column order + orphan columns before CANCELLED; COMPLETED column uses done bucket only."""
-    defs = list(
-        KanbanColumnDefinition.objects.filter(user_id=user_id).order_by("sort_order", "key")
-    )
-    def_keys = {d.key for d in defs}
-    non_completed_by_status: defaultdict[str, list[UserTask]] = defaultdict(list)
-    for task in list(iter_all_tasks_in_tree(parent_tasks)) + orphans:
-        if task.status == "COMPLETED":
-            continue
-        non_completed_by_status[task.status].append(task)
-
-    statuses_in_tasks = set(non_completed_by_status.keys())
-    orphan_keys = sorted(k for k in statuses_in_tasks if k not in def_keys)
-
-    non_cancel = [d for d in defs if d.key != "CANCELLED"]
-    cancel_row = next((d for d in defs if d.key == "CANCELLED"), None)
-
-    merged: list[tuple[str, str]] = []
-    for d in non_cancel:
-        merged.append((d.key, d.label))
-    for ok in orphan_keys:
-        merged.append((ok, f"[{ok}]"))
-    if cancel_row:
-        merged.append((cancel_row.key, cancel_row.label))
-
-    kanban_columns: list[dict] = []
-    for key, label in merged:
-        if key == "COMPLETED":
-            column_tasks = sort_tasks_for_kanban_column(completed_for_done)
-        else:
-            column_tasks = sort_tasks_for_kanban_column(
-                non_completed_by_status.get(key, [])
-            )
-        for t in column_tasks:
-            t.subtasks_list = []
-        kanban_columns.append({"status": key, "label": label, "tasks": column_tasks})
-    return kanban_columns
 
 
 def index(request):
@@ -281,78 +199,23 @@ def user_login(request):
         return render(request, 'basic_app/login.html', {})
 
 
-def update_overdue_priorities(user_id):
-    """Check and update priorities for overdue tasks"""
-    overdue_tasks = UserTask.objects.filter(
-        user_id=user_id,
-        to_show=1,
-        due_date__lt=datetime.date.today()
-    )
-    updated_count = 0
-    for task in overdue_tasks:
-        if task.update_priority_if_overdue():
-            updated_count += 1
-    return updated_count
-
-
-def get_task_hierarchy(user_id, exclude_completed=True):
-    """Organize tasks into hierarchy with parent tasks and subtasks"""
-    # Get all tasks for user, excluding completed tasks by default
-    query = UserTask.objects.filter(
-        user_id=user_id,
-        to_show=1
-    )
-    if exclude_completed:
-        query = query.exclude(status='COMPLETED')
-    
-    all_tasks = list(query.select_related('parent_task'))
-    
-    # Create a dictionary to map task IDs to task objects for quick lookup
-    task_dict = {task.id: task for task in all_tasks}
-    
-    # Initialize subtasks_list for all tasks
-    for task in all_tasks:
-        task.subtasks_list = []
-    
-    # Separate parent tasks (no parent_task) and organize subtasks
-    parent_tasks = []
-    for task in all_tasks:
-        # Check if task has a parent using parent_task_id (more reliable than parent_task object)
-        parent_id = getattr(task, 'parent_task_id', None)
-        if parent_id is None:
-            # No parent, this is a top-level task
-            parent_tasks.append(task)
-        else:
-            # This is a subtask, add it to its parent's subtasks_list
-            # Only add if parent is in task_dict AND exclude_completed filter allows it
-            if parent_id in task_dict:
-                # Double-check: if exclude_completed is True, make sure subtask is not completed
-                if exclude_completed and task.status == 'COMPLETED':
-                    continue  # Skip completed subtasks
-                parent_task = task_dict[parent_id]
-                parent_task.subtasks_list.append(task)
-            else:
-                # Parent not found in task_dict (shouldn't happen, but handle gracefully)
-                # This might be a data inconsistency - log or handle as needed
-                pass
-    
-    return parent_tasks
-
-
 @login_required
 def user_tasks_view(request):
-    current_user_id = request.user.id
-    ensure_kanban_builtins(request.user)
+    scope, redirect_resp = resolve_board_scope(request)
+    if redirect_resp:
+        return redirect_resp
 
-    # Update overdue priorities
-    update_overdue_priorities(current_user_id)
-    
-    # Get tasks with subtasks organized in hierarchy
-    parent_tasks = get_task_hierarchy(current_user_id)
-    
-    # Handle running timers
+    current_user_id = request.user.id
+
+    if scope.team_id:
+        ensure_kanban_builtins_for_team(TaskTeam.objects.get(pk=scope.team_id))
+    else:
+        ensure_kanban_builtins(request.user)
+
+    update_overdue_priorities_for_scope(scope)
+
     parttasks = PartTask.objects.filter(datetime_stop='0001-01-01 00:00:00')
-    all_tasks_flat = UserTask.objects.filter(user_id=current_user_id, to_show=1)
+    all_tasks_flat = list(flat_tasks_for_timer_and_counter(scope))
     if len(parttasks) > 0:
         for parttask in parttasks:
             for task in all_tasks_flat:
@@ -362,33 +225,42 @@ def user_tasks_view(request):
     if request.method == "POST" and 'start_button' in request.POST:
         form = StartTaskForm(request.POST)
         if form.is_valid():
-            name = form.cleaned_data['name']
             ident = form.cleaned_data['id']
-            date_start = datetime.date.today()
-            time_start = datetime.datetime.now().time()
-            datetime_start = timezone.now()
-            parttask = PartTask(usertask_id=ident, user_id=current_user_id,
-                                time_start=time_start, date_start=date_start, datetime_start=datetime_start)
-            parttask.save()
+            try:
+                usertask = UserTask.objects.get(pk=ident)
+            except UserTask.DoesNotExist:
+                usertask = None
+            if usertask and user_can_access_task(request.user, usertask):
+                date_start = datetime.date.today()
+                time_start = datetime.datetime.now().time()
+                datetime_start = timezone.now()
+                parttask = PartTask(usertask_id=ident, user_id=current_user_id,
+                                    time_start=time_start, date_start=date_start, datetime_start=datetime_start)
+                parttask.save()
 
-            running_task = UserTask.objects.filter(user_id=current_user_id, is_counting=1)
-            if len(running_task) > 0:
-                running_parttask = PartTask.objects.get(pk=running_task[0].partnumber)
-                running_parttask.date_stop = datetime.date.today()
-                running_parttask.time_stop = datetime.datetime.now().time()
-                running_parttask.datetime_stop = timezone.now()
-                running_parttask.time_length = (
-                        running_parttask.datetime_stop - running_parttask.datetime_start).total_seconds()
-                running_parttask.save()
+                team_ids = TaskTeamMembership.objects.filter(user_id=current_user_id).values_list(
+                    "team_id", flat=True
+                )
+                running_task = UserTask.objects.filter(is_counting=1).filter(
+                    Q(user_id=current_user_id, team__isnull=True)
+                    | Q(team_id__in=team_ids)
+                )
+                if len(running_task) > 0:
+                    running_parttask = PartTask.objects.get(pk=running_task[0].partnumber)
+                    running_parttask.date_stop = datetime.date.today()
+                    running_parttask.time_stop = datetime.datetime.now().time()
+                    running_parttask.datetime_stop = timezone.now()
+                    running_parttask.time_length = (
+                            running_parttask.datetime_stop - running_parttask.datetime_start).total_seconds()
+                    running_parttask.save()
 
-                running_task[0].timer += running_parttask.time_length
-                running_task[0].is_counting = 0
-                running_task[0].save()
+                    running_task[0].timer += running_parttask.time_length
+                    running_task[0].is_counting = 0
+                    running_task[0].save()
 
-            usertask = UserTask.objects.get(pk=ident)
-            usertask.partnumber = parttask.pk
-            usertask.is_counting = 1
-            usertask.save()
+                usertask.partnumber = parttask.pk
+                usertask.is_counting = 1
+                usertask.save()
         else:
             print(form)
 
@@ -404,30 +276,34 @@ def user_tasks_view(request):
             parttask.save()
 
             usertask = UserTask.objects.get(pk=parttask.usertask_id)
-            usertask.timer += parttask.time_length
-            usertask.is_counting = 0
-            usertask.save()
+            if user_can_access_task(request.user, usertask):
+                usertask.timer += parttask.time_length
+                usertask.is_counting = 0
+                usertask.save()
         else:
             print(form)
 
     elif request.method == "POST":
-        form = UserTaskForm(request.POST, user=request.user)
-        # Set user on form instance before validation to avoid RelatedObjectDoesNotExist error
-        if not form.instance.pk:  # New task
+        form = UserTaskForm(
+            request.POST,
+            user=request.user,
+            team_id=scope.team_id,
+        )
+        if not form.instance.pk:
             form.instance.user = request.user
         if form.is_valid():
             ident = form.cleaned_data.get('id', 0)
             to_delete = form.cleaned_data.get('fordelete', 'No')
-            
+
             if ident and ident != 0:
-                # Update existing task
                 try:
-                    userform = UserTask.objects.get(pk=ident, user=request.user)
-                    if to_delete == "Yes":
+                    userform = UserTask.objects.get(pk=ident)
+                    if not user_can_access_task(request.user, userform):
+                        pass
+                    elif to_delete == "Yes":
                         userform.to_show = 0
                         userform.save()
                     else:
-                        # Update all fields
                         userform.name = form.cleaned_data['name']
                         userform.timer = form.cleaned_data['timer']
                         userform.status = form.cleaned_data.get('status', 'TODO')
@@ -435,86 +311,89 @@ def user_tasks_view(request):
                         userform.priority = form.cleaned_data.get('priority', 2)
                         userform.comment = form.cleaned_data.get('comment', '')
                         userform.parent_task = form.cleaned_data.get('parent_task')
+                        if scope.team_id:
+                            userform.assignee = form.cleaned_data.get('assignee')
                         userform.save()
                 except UserTask.DoesNotExist:
-                    pass  # Task doesn't exist, ignore
+                    pass
             else:
-                # Create new task - only if name is provided
                 task_name = form.cleaned_data.get('name', '').strip()
-                if task_name:  # Only create if name is not empty
+                if task_name:
                     parent_task = form.cleaned_data.get('parent_task')
-                
-                # Validate parent_task belongs to same user if provided
-                if parent_task:
-                    # Refresh parent_task from database to ensure it has all attributes
-                    try:
-                        parent_task = UserTask.objects.get(pk=parent_task.pk)
-                        if parent_task.user != request.user:
-                            form.add_error('parent_task', 'Родительская задача должна принадлежать тому же пользователю.')
-                            parent_task = None  # Don't use invalid parent
-                    except UserTask.DoesNotExist:
-                        form.add_error('parent_task', 'Родительская задача не найдена.')
-                        parent_task = None
-                
+                    if parent_task:
+                        try:
+                            parent_task = UserTask.objects.get(pk=parent_task.pk)
+                            if scope.team_id:
+                                if parent_task.team_id != scope.team_id:
+                                    form.add_error(
+                                        'parent_task',
+                                        'Родительская задача должна относиться к этой команде.',
+                                    )
+                                    parent_task = None
+                            elif parent_task.user != request.user or parent_task.team_id:
+                                form.add_error(
+                                    'parent_task',
+                                    'Родительская задача должна принадлежать тому же пользователю.',
+                                )
+                                parent_task = None
+                        except UserTask.DoesNotExist:
+                            form.add_error('parent_task', 'Родительская задача не найдена.')
+                            parent_task = None
+
                 if not form.errors:
                     new_status = form.cleaned_data.get('status', 'TODO')
                     userform = UserTask(
                         name=form.cleaned_data['name'],
                         user=request.user,
+                        team_id=scope.team_id,
+                        assignee=form.cleaned_data.get('assignee') if scope.team_id else None,
                         timer=form.cleaned_data.get('timer', 0),
                         status=new_status,
                         due_date=form.cleaned_data.get('due_date'),
                         priority=form.cleaned_data.get('priority', 2),
                         comment=form.cleaned_data.get('comment', ''),
                         parent_task=parent_task,
-                        kanban_position=next_kanban_position_for_user_status(
-                            request.user.id, new_status
-                        ),
+                        kanban_position=next_kanban_position_for_scope(scope, new_status),
                     )
-                    # Save - model's save() will call full_clean() for validation
                     userform.save()
         else:
             print('Form errors:', form.errors)
             print('POST data:', request.POST)
             print('Form data:', form.data)
 
-    # Rebuild hierarchy after potential changes (excluding completed tasks)
-    parent_tasks = get_task_hierarchy(current_user_id, exclude_completed=True)
-    
-    # Get completed tasks from the last week
+    parent_tasks, orphans, completed_for_done = gather_kanban_board_inputs_for_scope(scope)
+
     today = datetime.date.today()
     week_ago = today - datetime.timedelta(days=7)
-    # Get all completed tasks directly from database (not using hierarchy to avoid filtering issues)
-    completed_tasks_query = UserTask.objects.filter(
-        user_id=current_user_id,
-        to_show=1,
-        status='COMPLETED'
-    ).select_related('parent_task')
-    
-    # Filter to only completed tasks from last week
+    if scope.team_id is None:
+        completed_tasks_query = UserTask.objects.filter(
+            user_id=current_user_id,
+            team__isnull=True,
+            to_show=1,
+            status="COMPLETED",
+        ).select_related("parent_task")
+    else:
+        completed_tasks_query = visible_team_tasks_queryset(scope.team_id).filter(
+            status="COMPLETED",
+        ).select_related("parent_task")
+
     completed_tasks_last_week = []
     for task in completed_tasks_query:
-        # Check if completion_date exists and is within last week
         if task.completion_date and task.completion_date >= week_ago:
-            # Only include top-level tasks (no parent) or include all if needed
             if not task.parent_task_id:
                 completed_tasks_last_week.append(task)
-    
-    # Also include completed subtasks if their parent is not completed (orphaned completed subtasks)
-    # This ensures we show completed subtasks even if parent is not completed
+
     for task in completed_tasks_query:
         if task.completion_date and task.completion_date >= week_ago:
             if task.parent_task_id:
-                # Check if parent is also completed - if not, include this subtask
                 try:
                     parent = UserTask.objects.get(pk=task.parent_task_id)
-                    if parent.status != 'COMPLETED':
+                    if parent.status != "COMPLETED":
                         completed_tasks_last_week.append(task)
                 except UserTask.DoesNotExist:
                     pass
-    
-    # Calculate today's time for all tasks (including subtasks)
-    all_tasks_flat = UserTask.objects.filter(user_id=current_user_id, to_show=1).exclude(status='COMPLETED')
+
+    all_tasks_flat = flat_tasks_for_timer_and_counter(scope).exclude(status="COMPLETED")
     
     def add_today_time_and_helpers(task):
         """Add today's time and helper properties for template, including subtask aggregation"""
@@ -573,85 +452,98 @@ def user_tasks_view(request):
     for task in parent_tasks:
         add_today_time_and_helpers(task)
 
-    tree_ids = {t.id for t in iter_all_tasks_in_tree(parent_tasks)}
-    non_completed_flat = list(
-        UserTask.objects.filter(user_id=current_user_id, to_show=1)
-        .exclude(status="COMPLETED")
-        .select_related("parent_task")
-    )
-    orphans: list[UserTask] = []
-    for task in non_completed_flat:
-        if task.id not in tree_ids:
-            task.subtasks_list = []
-            add_today_time_and_helpers(task)
-            orphans.append(task)
-
-    completed_for_done = list(
-        UserTask.objects.filter(
-            user_id=current_user_id,
-            to_show=1,
-            status="COMPLETED",
-        ).select_related("parent_task")
-    )
-    for task in completed_for_done:
-        task.subtasks_list = []
+    for task in orphans:
         add_today_time_and_helpers(task)
 
-    kanban_columns = build_kanban_columns_for_user(
-        current_user_id,
+    for task in completed_for_done:
+        add_today_time_and_helpers(task)
+
+    kanban_columns = build_kanban_columns_for_scope(
+        scope,
         parent_tasks,
         orphans,
         completed_for_done,
     )
 
+    if scope.team_id is None:
+        col_qs = KanbanColumnDefinition.objects.filter(user_id=current_user_id)
+    else:
+        col_qs = KanbanColumnDefinition.objects.filter(team_id=scope.team_id)
+
     def_keys_non_cancel = set(
-        KanbanColumnDefinition.objects.filter(user_id=current_user_id)
-        .exclude(key="CANCELLED")
-        .values_list("key", flat=True)
+        col_qs.exclude(key="CANCELLED").values_list("key", flat=True)
     )
     for col in kanban_columns:
         col["is_reorderable"] = col["status"] in def_keys_non_cancel
 
     initial_reorderable_column_keys = list(
-        KanbanColumnDefinition.objects.filter(user_id=current_user_id)
-        .exclude(key="CANCELLED")
+        col_qs.exclude(key="CANCELLED")
         .order_by("sort_order", "key")
         .values_list("key", flat=True)
     )
 
     status_options = [
         {"key": d.key, "label": d.label}
-        for d in KanbanColumnDefinition.objects.filter(user_id=current_user_id).order_by(
-            "sort_order", "key"
-        )
+        for d in col_qs.order_by("sort_order", "key")
     ]
 
-    # Process completed tasks for display (add time helpers)
     for task in completed_tasks_last_week:
         add_today_time_and_helpers(task)
+
+    user_teams = list(
+        TaskTeam.objects.filter(
+            memberships__user_id=current_user_id,
+        ).order_by("name").distinct()
+    )
+
+    team_member_options: list[dict] = []
+    if scope.team_id:
+        team_member_options = [
+            {"id": u.id, "username": u.get_username()}
+            for u in User.objects.filter(
+                id__in=TaskTeamMembership.objects.filter(team_id=scope.team_id).values_list(
+                    "user_id", flat=True
+                )
+            ).order_by("username")
+        ]
 
     context = {
         "usertasks": [],
         "kanban_columns": kanban_columns,
         "completed_tasks": completed_tasks_last_week,
-        "counter": len(all_tasks_flat),
+        "counter": all_tasks_flat.count(),
         "today": today,
         "status_options": status_options,
         "builtin_status_keys": BUILTIN_KEYS,
         "initial_reorderable_column_keys": initial_reorderable_column_keys,
+        "board_team_id": scope.team_id,
+        "user_teams": user_teams,
+        "is_team_board": scope.team_id is not None,
+        "team_member_options": team_member_options,
     }
     return render(request, "basic_app/tasks.html", context)
+
+
+def _tasks_board_redirect(request):
+    raw = (request.POST.get("board_team") or request.GET.get("team") or "").strip()
+    if raw:
+        return redirect(f"{reverse('basic_app:user_tasks_view')}?team={raw}")
+    return redirect("basic_app:user_tasks_view")
 
 
 @login_required
 def kanban_column_create(request):
     if request.method != "POST":
         return redirect("basic_app:user_tasks_view")
-    ensure_kanban_builtins(request.user)
+    scope = board_scope_from_request_query(request)
+    if scope.team_id:
+        ensure_kanban_builtins_for_team(TaskTeam.objects.get(pk=scope.team_id))
+    else:
+        ensure_kanban_builtins(request.user)
     label = (request.POST.get("label") or "").strip()
     if not label:
         messages.error(request, "Укажите название колонки.")
-        return redirect("basic_app:user_tasks_view")
+        return _tasks_board_redirect(request)
     raw_key = (request.POST.get("key") or "").strip()
     if raw_key:
         key = raw_key.upper().replace(" ", "_")
@@ -659,24 +551,40 @@ def kanban_column_create(request):
         key = re.sub(r"_+", "_", key).strip("_")[:64]
         if not key:
             messages.error(request, "Недопустимый ключ колонки.")
-            return redirect("basic_app:user_tasks_view")
+            return _tasks_board_redirect(request)
     else:
-        key = derive_key_from_label(label, request.user)
+        if scope.team_id:
+            key = derive_key_from_label_for_team(label, TaskTeam.objects.get(pk=scope.team_id))
+        else:
+            key = derive_key_from_label(label, request.user)
     if key in BUILTIN_KEYS:
         messages.error(request, "Этот ключ зарезервирован для встроенной колонки.")
-        return redirect("basic_app:user_tasks_view")
-    if KanbanColumnDefinition.objects.filter(user=request.user, key=key).exists():
-        messages.error(request, "Колонка с таким ключом уже существует.")
-        return redirect("basic_app:user_tasks_view")
-    KanbanColumnDefinition.objects.create(
-        user=request.user,
-        key=key,
-        label=label,
-        sort_order=next_custom_sort_order(request.user),
-        is_builtin=False,
-    )
+        return _tasks_board_redirect(request)
+    if scope.team_id:
+        team = TaskTeam.objects.get(pk=scope.team_id)
+        if KanbanColumnDefinition.objects.filter(team=team, key=key).exists():
+            messages.error(request, "Колонка с таким ключом уже существует.")
+            return _tasks_board_redirect(request)
+        KanbanColumnDefinition.objects.create(
+            team=team,
+            key=key,
+            label=label,
+            sort_order=next_custom_sort_order_for_team(team),
+            is_builtin=False,
+        )
+    else:
+        if KanbanColumnDefinition.objects.filter(user=request.user, key=key).exists():
+            messages.error(request, "Колонка с таким ключом уже существует.")
+            return _tasks_board_redirect(request)
+        KanbanColumnDefinition.objects.create(
+            user=request.user,
+            key=key,
+            label=label,
+            sort_order=next_custom_sort_order(request.user),
+            is_builtin=False,
+        )
     messages.success(request, "Колонка добавлена.")
-    return redirect("basic_app:user_tasks_view")
+    return _tasks_board_redirect(request)
 
 
 @login_required
@@ -696,9 +604,19 @@ def kanban_column_reorder(request):
             status=400,
         )
 
-    user = request.user
+    scope = board_scope_from_request_query(request)
+    if scope.team_id:
+        ensure_kanban_builtins_for_team(TaskTeam.objects.get(pk=scope.team_id))
+    else:
+        ensure_kanban_builtins(request.user)
+
+    if scope.team_id:
+        col_filter = {"team_id": scope.team_id}
+    else:
+        col_filter = {"user_id": request.user.id}
+
     expected_keys = sorted(
-        KanbanColumnDefinition.objects.filter(user=user)
+        KanbanColumnDefinition.objects.filter(**col_filter)
         .exclude(key="CANCELLED")
         .values_list("key", flat=True)
     )
@@ -715,7 +633,7 @@ def kanban_column_reorder(request):
 
     with transaction.atomic():
         for index, key in enumerate(received):
-            KanbanColumnDefinition.objects.filter(user=user, key=key).update(
+            KanbanColumnDefinition.objects.filter(**col_filter, key=key).update(
                 sort_order=index
             )
 
@@ -739,9 +657,13 @@ def kanban_task_reorder(request):
             status=400,
         )
 
-    ensure_kanban_builtins(request.user)
-    user_id = request.user.id
-    expected = expected_task_ids_by_status_for_user(user_id)
+    scope = board_scope_from_request_query(request)
+    if scope.team_id:
+        ensure_kanban_builtins_for_team(TaskTeam.objects.get(pk=scope.team_id))
+    else:
+        ensure_kanban_builtins(request.user)
+
+    expected = expected_task_ids_by_status_for_scope(scope)
     received = body.task_ids_by_status
     if not task_snapshot_matches_expected(expected, received):
         return JsonResponse(
@@ -757,15 +679,55 @@ def kanban_task_reorder(request):
         with transaction.atomic():
             for status_key, ids in received.items():
                 for pos, tid in enumerate(ids):
-                    task = UserTask.objects.select_for_update().get(pk=tid, user_id=user_id)
+                    task = UserTask.objects.select_for_update().get(pk=tid)
+                    if not user_can_access_task(request.user, task):
+                        raise PermissionDenied("Нет доступа к этой задаче.")
+                    if scope.team_id:
+                        if task.team_id != scope.team_id:
+                            raise DjangoValidationError(
+                                "Задача не относится к выбранной командной доске.",
+                                code="boardScopeMismatch",
+                            )
+                    else:
+                        if task.team_id is not None or task.user_id != request.user.id:
+                            raise DjangoValidationError(
+                                "Задача не относится к выбранной личной доске.",
+                                code="boardScopeMismatch",
+                            )
                     task.status = status_key
                     task.kanban_position = pos
                     task.save()
-    except DjangoValidationError:
+    except PermissionDenied as e:
         return JsonResponse(
             {
                 "ok": False,
-                "error": "Недопустимый статус для одной или нескольких задач.",
+                "error": str(e) or "Нет доступа к этой задаче.",
+                "code": "accessDenied",
+            },
+            status=403,
+        )
+    except DjangoValidationError as e:
+        if getattr(e, "code", None) == "boardScopeMismatch":
+            return JsonResponse(
+                {
+                    "ok": False,
+                    "error": e.messages[0] if e.messages else "Задача не относится к выбранной доске.",
+                    "code": "boardScopeMismatch",
+                },
+                status=400,
+            )
+        err_msg = "Недопустимый статус для одной или нескольких задач."
+        if hasattr(e, "error_dict") and e.error_dict:
+            for msgs in e.error_dict.values():
+                if msgs:
+                    err_msg = str(msgs[0])
+                    break
+        elif e.messages:
+            err_msg = str(e.messages[0])
+        return JsonResponse(
+            {
+                "ok": False,
+                "error": err_msg,
                 "code": "invalidStatusTransition",
             },
             status=400,
@@ -906,7 +868,9 @@ def reports(request):
 
 @login_required
 def task_detail_view(request, task_id: int):
-    task = get_object_or_404(UserTask, pk=task_id, user=request.user)
+    task = get_object_or_404(UserTask, pk=task_id)
+    if not user_can_access_task(request.user, task):
+        raise Http404()
     return render(request, "basic_app/task_detail.html", {"task": task})
 
 

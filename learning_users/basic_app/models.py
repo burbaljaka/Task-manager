@@ -1,8 +1,9 @@
 from django.db import models
 from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
-from django.db.models import UniqueConstraint
-from django.utils import timezone
+from django.db.models import Q, UniqueConstraint
+from django.db.models.signals import pre_delete
+from django.dispatch import receiver
 from datetime import date
 
 from basic_app.kanban_utils import BUILTIN_KEYS, DEFAULT_BUILTIN_LABELS
@@ -11,8 +12,54 @@ from basic_app.kanban_utils import BUILTIN_KEYS, DEFAULT_BUILTIN_LABELS
 # Create your models here.
 
 
+class TaskTeam(models.Model):
+    name = models.CharField(max_length=200)
+    slug = models.SlugField(max_length=64, blank=True)
+    description = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["name"]
+
+    def __str__(self) -> str:
+        return self.name
+
+
+class TaskTeamMembership(models.Model):
+    team = models.ForeignKey(
+        TaskTeam, on_delete=models.CASCADE, related_name="memberships"
+    )
+    user = models.ForeignKey(
+        User, on_delete=models.CASCADE, related_name="task_team_memberships"
+    )
+
+    class Meta:
+        constraints = [
+            UniqueConstraint(fields=["team", "user"], name="uniq_task_team_membership_team_user"),
+        ]
+        indexes = [
+            models.Index(fields=["team", "user"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.team_id}:{self.user_id}"
+
+
 class KanbanColumnDefinition(models.Model):
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="kanban_columns")
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="kanban_columns",
+        null=True,
+        blank=True,
+    )
+    team = models.ForeignKey(
+        TaskTeam,
+        on_delete=models.CASCADE,
+        related_name="kanban_columns",
+        null=True,
+        blank=True,
+    )
     key = models.CharField(max_length=64)
     label = models.CharField(max_length=200)
     sort_order = models.PositiveIntegerField()
@@ -20,15 +67,40 @@ class KanbanColumnDefinition(models.Model):
 
     class Meta:
         constraints = [
-            UniqueConstraint(fields=["user", "key"], name="uniq_kanban_column_user_key"),
+            models.CheckConstraint(
+                check=(
+                    Q(user__isnull=False) & Q(team__isnull=True)
+                )
+                | (Q(user__isnull=True) & Q(team__isnull=False)),
+                name="kanban_column_user_xor_team",
+            ),
+            UniqueConstraint(
+                fields=["user", "key"],
+                condition=Q(user__isnull=False),
+                name="uniq_kanban_column_user_key",
+            ),
+            UniqueConstraint(
+                fields=["team", "key"],
+                condition=Q(team__isnull=False),
+                name="uniq_kanban_column_team_key",
+            ),
         ]
         indexes = [
             models.Index(fields=["user", "sort_order"]),
+            models.Index(fields=["team", "sort_order"]),
         ]
         ordering = ["sort_order", "key"]
 
     def __str__(self) -> str:
         return f"{self.key} ({self.label})"
+
+    def clean(self) -> None:
+        if bool(self.user_id) == bool(self.team_id):
+            raise ValidationError('Должно быть задано ровно одно из полей: пользователь или команда.')
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        super().save(*args, **kwargs)
 
 
 class UserProfileInfo(models.Model):
@@ -53,8 +125,23 @@ class UserTask(models.Model):
         (3, 'Высокий'),
         (4, 'Срочный'),
     ]
-    
+
     user = models.ForeignKey(User, on_delete=models.DO_NOTHING)
+
+    team = models.ForeignKey(
+        TaskTeam,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="tasks",
+    )
+    assignee = models.ForeignKey(
+        User,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="assigned_tasks",
+    )
 
     name = models.CharField(max_length=30, default='Задача')
     timer = models.IntegerField(default=0)
@@ -62,7 +149,7 @@ class UserTask(models.Model):
     is_counting = models.IntegerField(default=0)
     partnumber = models.IntegerField(default=0)
     to_show = models.IntegerField(default=1)
-    
+
     # New fields (allowed keys: built-ins + KanbanColumnDefinition + orphan current value)
     status = models.CharField(max_length=64, default="TODO")
     due_date = models.DateField(null=True, blank=True)
@@ -81,19 +168,29 @@ class UserTask(models.Model):
                 fields=["user", "status", "kanban_position"],
                 name="usertask_user_status_kpos_idx",
             ),
+            models.Index(fields=["team", "status"]),
+            models.Index(fields=["team", "assignee"]),
         ]
 
     def allowed_status_keys(self) -> set[str]:
         keys: set[str] = set(BUILTIN_KEYS)
-        uid = getattr(self, "user_id", None)
-        if not uid and getattr(self, "user", None) and getattr(self.user, "pk", None):
-            uid = self.user.pk
-        if uid:
+        tid = getattr(self, "team_id", None)
+        if tid:
             keys |= set(
-                KanbanColumnDefinition.objects.filter(user_id=uid).values_list(
+                KanbanColumnDefinition.objects.filter(team_id=tid).values_list(
                     "key", flat=True
                 )
             )
+        else:
+            uid = getattr(self, "user_id", None)
+            if not uid and getattr(self, "user", None) and getattr(self.user, "pk", None):
+                uid = self.user.pk
+            if uid:
+                keys |= set(
+                    KanbanColumnDefinition.objects.filter(user_id=uid).values_list(
+                        "key", flat=True
+                    )
+                )
         if self.pk and self.status:
             keys.add(self.status)
         return keys
@@ -101,6 +198,12 @@ class UserTask(models.Model):
     def get_status_label(self) -> str:
         if self.status in DEFAULT_BUILTIN_LABELS:
             return DEFAULT_BUILTIN_LABELS[self.status]
+        tid = getattr(self, "team_id", None)
+        if tid:
+            col = KanbanColumnDefinition.objects.filter(team_id=tid, key=self.status).first()
+            if col:
+                return col.label
+            return self.status
         uid = getattr(self, "user_id", None)
         if not uid and getattr(self, "user", None):
             uid = self.user_id
@@ -121,13 +224,18 @@ class UserTask(models.Model):
                 user_obj = self.user
             except UserTask.user.RelatedObjectDoesNotExist:
                 pass
-            
+
             # Skip validation if user is not set (will be set before save)
             if not user_id and not user_obj:
                 return  # User will be set before save, skip validation for now
         except AttributeError:
             return  # User field doesn't exist yet, skip validation
-        
+
+        team_id = getattr(self, "team_id", None)
+        if team_id and self.assignee_id:
+            if not TaskTeamMembership.objects.filter(team_id=team_id, user_id=self.assignee_id).exists():
+                raise ValidationError({'assignee': 'Исполнитель должен быть участником этой команды.'})
+
         if self.parent_task:
             # For existing instances, check if parent_task has actually changed
             # Skip circular reference validation if parent_task hasn't changed
@@ -150,29 +258,35 @@ class UserTask(models.Model):
                         parent_task_changed = False
                 except UserTask.DoesNotExist:
                     pass  # New instance, continue with validation
-            
-            # Ensure parent_task belongs to same user
-            try:
-                parent_user_id = getattr(self.parent_task, 'user_id', None)
-                if not parent_user_id:
-                    try:
-                        parent_user_id = self.parent_task.user.id if self.parent_task.user else None
-                    except (AttributeError, UserTask.user.RelatedObjectDoesNotExist):
-                        pass
-                
-                current_user_id = getattr(self, 'user_id', None)
-                if not current_user_id:
-                    try:
-                        current_user_id = self.user.id if self.user else None
-                    except (AttributeError, UserTask.user.RelatedObjectDoesNotExist):
-                        pass
-                
-                if parent_user_id and current_user_id and parent_user_id != current_user_id:
-                    raise ValidationError({'parent_task': 'Родительская задача должна принадлежать тому же пользователю.'})
-            except (AttributeError, UserTask.user.RelatedObjectDoesNotExist):
-                # If we can't access user attributes, skip this check
-                pass
-            
+
+            if team_id:
+                parent_team_id = getattr(self.parent_task, 'team_id', None)
+                if parent_team_id != team_id:
+                    raise ValidationError({'parent_task': 'Родительская задача должна относиться к той же команде.'})
+            else:
+                # Personal: same user, no team on parent
+                try:
+                    parent_user_id = getattr(self.parent_task, 'user_id', None)
+                    if not parent_user_id:
+                        try:
+                            parent_user_id = self.parent_task.user.id if self.parent_task.user else None
+                        except (AttributeError, UserTask.user.RelatedObjectDoesNotExist):
+                            pass
+
+                    current_user_id = getattr(self, 'user_id', None)
+                    if not current_user_id:
+                        try:
+                            current_user_id = self.user.id if self.user else None
+                        except (AttributeError, UserTask.user.RelatedObjectDoesNotExist):
+                            pass
+
+                    if parent_user_id and current_user_id and parent_user_id != current_user_id:
+                        raise ValidationError({'parent_task': 'Родительская задача должна принадлежать тому же пользователю.'})
+                    if getattr(self.parent_task, "team_id", None):
+                        raise ValidationError({'parent_task': 'Родительская задача должна быть личной (без команды).'})
+                except (AttributeError, UserTask.user.RelatedObjectDoesNotExist):
+                    pass
+
             # Prevent circular references - only check if parent_task has changed
             if parent_task_changed:
                 try:
@@ -182,43 +296,43 @@ class UserTask(models.Model):
                     pass
 
         if self.status and self.status not in self.allowed_status_keys():
-            raise ValidationError({"status": "Недопустимый статус для этого пользователя."})
+            raise ValidationError({"status": "Недопустимый статус для этой доски."})
 
     def save(self, *args, **kwargs):
         """Override save to run validation and track completion date"""
         # Ensure user is set before validation
         if not getattr(self, 'user_id', None) and not hasattr(self, 'user'):
             raise ValueError('User must be set before saving.')
-        
+
         # Track completion date when status changes to COMPLETED
         if self.status == 'COMPLETED' and not self.completion_date:
             self.completion_date = date.today()
         elif self.status != 'COMPLETED':
             # Clear completion date if status changes away from COMPLETED
             self.completion_date = None
-        
+
         self.full_clean()
         super().save(*args, **kwargs)
-    
+
     def is_overdue(self):
         """Check if task is overdue"""
         if self.due_date:
             return self.due_date < date.today()
         return False
-    
+
     def get_subtasks(self):
         """Get all subtasks for this task"""
         return UserTask.objects.filter(parent_task=self, to_show=1)
-    
+
     def can_be_parent_of(self, task):
         """Check if this task can be a parent of the given task (prevent circular references)"""
         if not task:
             return True
-        
+
         # Cannot be parent of itself
         if self.id and self.id == task.id:
             return False
-        
+
         # Check if task would create a cycle (task or its ancestors is self)
         current = task
         visited = set()
@@ -229,9 +343,9 @@ class UserTask(models.Model):
                 break  # Prevent infinite loop
             visited.add(current.id)
             current = current.parent_task
-        
+
         return True
-    
+
     def update_priority_if_overdue(self):
         """Auto-increase priority if task is overdue"""
         if self.is_overdue() and self.priority < 4:
@@ -239,7 +353,7 @@ class UserTask(models.Model):
             self.save(update_fields=['priority'])
             return True
         return False
-    
+
     def get_priority_display_name(self):
         """Get human-readable priority name"""
         return dict(self.PRIORITY_CHOICES)[self.priority]
@@ -263,3 +377,10 @@ class PartTask(models.Model):
 
     def __str__(self):
         return self.date_start.strftime("%Y-%m-%d") + "T" + self.time_start.strftime("%H-%M-%S") + " " + str(self.usertask_id)
+
+
+@receiver(pre_delete, sender=TaskTeamMembership)
+def clear_assignee_when_membership_removed(sender, instance, **kwargs):
+    UserTask.objects.filter(team_id=instance.team_id, assignee_id=instance.user_id).update(
+        assignee_id=None
+    )

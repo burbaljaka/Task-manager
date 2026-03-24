@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from django.contrib.auth.models import User
 
+    from basic_app.models import TaskTeam
+
 # Built-in status keys (ordering for seeds / tests).
 BUILTIN_ORDER_KEYS: tuple[str, ...] = (
     "TODO",
@@ -60,6 +62,25 @@ def derive_key_from_label(label: str, user: User) -> str:
     return key
 
 
+def derive_key_from_label_for_team(label: str, team: TaskTeam) -> str:
+    """UPPER_SNAKE from label; unique per team board."""
+    from basic_app.models import KanbanColumnDefinition
+
+    raw = (label or "").strip().upper()
+    raw = re.sub(r"[^A-Z0-9]+", "_", raw)
+    raw = re.sub(r"_+", "_", raw).strip("_")
+    if not raw:
+        raw = "COLUMN"
+    base = raw[:64]
+    key = base
+    n = 2
+    while KanbanColumnDefinition.objects.filter(team=team, key=key).exists():
+        suffix = f"_{n}"
+        key = (base[: 64 - len(suffix)] + suffix)[:64]
+        n += 1
+    return key
+
+
 def ensure_kanban_builtins(user: User) -> None:
     """Idempotent: create four built-in column definitions for the user."""
     from basic_app.models import KanbanColumnDefinition
@@ -82,11 +103,47 @@ def ensure_kanban_builtins(user: User) -> None:
         )
 
 
+def ensure_kanban_builtins_for_team(team: TaskTeam) -> None:
+    """Idempotent: create four built-in column definitions for a team board."""
+    from basic_app.models import KanbanColumnDefinition
+
+    seeds: tuple[tuple[str, str, int], ...] = (
+        ("TODO", DEFAULT_BUILTIN_LABELS["TODO"], SORT_TODO),
+        ("IN_PROGRESS", DEFAULT_BUILTIN_LABELS["IN_PROGRESS"], SORT_IN_PROGRESS),
+        ("COMPLETED", DEFAULT_BUILTIN_LABELS["COMPLETED"], SORT_COMPLETED),
+        ("CANCELLED", DEFAULT_BUILTIN_LABELS["CANCELLED"], SORT_CANCELLED_SENTINEL),
+    )
+    for key, label, sort_order in seeds:
+        KanbanColumnDefinition.objects.get_or_create(
+            team=team,
+            key=key,
+            defaults={
+                "label": label,
+                "sort_order": sort_order,
+                "is_builtin": True,
+            },
+        )
+
+
 def next_custom_sort_order(user: User) -> int:
     """Insert custom columns in 3..9998 before CANCELLED (9999)."""
     from basic_app.models import KanbanColumnDefinition
 
     qs = KanbanColumnDefinition.objects.filter(user=user, sort_order__lt=SORT_CANCELLED_SENTINEL)
+    current = qs.order_by("-sort_order").values_list("sort_order", flat=True).first()
+    if current is None:
+        return 3
+    nxt = int(current) + 1
+    if nxt >= SORT_CANCELLED_SENTINEL:
+        return SORT_CANCELLED_SENTINEL - 1
+    return max(nxt, 3)
+
+
+def next_custom_sort_order_for_team(team: TaskTeam) -> int:
+    """Insert custom columns for a team board before CANCELLED sentinel."""
+    from basic_app.models import KanbanColumnDefinition
+
+    qs = KanbanColumnDefinition.objects.filter(team=team, sort_order__lt=SORT_CANCELLED_SENTINEL)
     current = qs.order_by("-sort_order").values_list("sort_order", flat=True).first()
     if current is None:
         return 3

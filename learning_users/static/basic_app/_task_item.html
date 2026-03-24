@@ -8,8 +8,9 @@
      data-today-seconds="{{ task.today_seconds|default:0 }}"
      {% if task.parent_task %}data-parent-task-id="{{ task.parent_task.id }}"{% endif %}>
   <div class="task-card-body">
-    <form action="{% url 'basic_app:user_tasks_view' %}" name="form-{{ task.id }}" method="POST" autocomplete="off">
+    <form action="{% url 'basic_app:user_tasks_view' %}{% if board_team_id %}?team={{ board_team_id }}{% endif %}" name="form-{{ task.id }}" method="POST" autocomplete="off">
       {% csrf_token %}
+      {% if board_team_id %}<input type="hidden" name="board_team" value="{{ board_team_id }}">{% endif %}
       
       <!-- Metadata Bar -->
       <div class="task-metadata-bar">
@@ -19,6 +20,9 @@
            rel="noopener noreferrer"
            class="task-ref-badge"
            title="Открыть задачу #{{ task.id }}">#{{ task.id }}</a>
+        {% if is_team_board %}
+        <span class="text-muted small ms-1" title="Создатель">@{{ task.user.username }}</span>
+        {% endif %}
         <!-- Priority Stars -->
         <span class="priority-stars priority-{{ task.get_priority_css_class }}" title="{{ task.get_priority_display_name }}">
           {% if task.priority >= 1 %}<span class="priority-star">★</span>{% else %}<span class="priority-star">☆</span>{% endif %}
@@ -35,6 +39,15 @@
           <option value="{{ opt.key }}"{% if task.status == opt.key %} selected{% endif %}>{{ opt.label }}</option>
           {% endfor %}
         </select>
+        {% if is_team_board %}
+        <select name="assignee" class="form-control form-control-sm d-inline-block" style="width:auto; max-width: 9rem; font-size: 0.75rem;"
+                title="Исполнитель" onchange="this.form.submit()">
+          <option value="">—</option>
+          {% for m in team_member_options %}
+          <option value="{{ m.id }}"{% if task.assignee_id == m.id %} selected{% endif %}>{{ m.username }}</option>
+          {% endfor %}
+        </select>
+        {% endif %}
         
         <!-- Due Date Badge (Editable) -->
         <input type="date" name="due_date" 
