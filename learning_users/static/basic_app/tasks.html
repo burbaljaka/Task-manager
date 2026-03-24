@@ -866,6 +866,26 @@
     toRemove.forEach(function(c) { el.classList.remove(c); });
   }
 
+  /** After drag-and-drop, card DOM moves but data-task-status and the status field stay stale; align them with the column key (server already persisted via kanban_task_reorder). */
+  function syncKanbanCardStatusesFromColumns() {
+    var board = document.querySelector('.kanban-board');
+    if (!board) return;
+    board.querySelectorAll('.kanban-column:not([data-kanban-fixed])').forEach(function(col) {
+      var st = col.getAttribute('data-kanban-status');
+      if (!st) return;
+      col.querySelectorAll('.kanban-column-body .task-card[data-task-id]').forEach(function(card) {
+        card.setAttribute('data-task-status', st);
+        var form = card.querySelector('form');
+        if (!form) return;
+        var statusSelect = form.querySelector('select[name="status"]');
+        if (!statusSelect) return;
+        statusSelect.value = st;
+        stripStatusClasses(statusSelect);
+        statusSelect.classList.add('status-badge', 'status-' + statusCssSlug(st));
+      });
+    });
+  }
+
   function postKanbanTaskOrder() {
     var board = document.querySelector('.kanban-board');
     if (!board) return;
@@ -898,6 +918,7 @@
       });
     }).then(function(res) {
       if (res.ok && res.body && res.body.ok === true) {
+        syncKanbanCardStatusesFromColumns();
         return;
       }
       var msg = (res.body && res.body.error) ? res.body.error : 'Не удалось сохранить порядок задач';
