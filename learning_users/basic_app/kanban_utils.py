@@ -28,11 +28,11 @@ DEFAULT_BUILTIN_LABELS: dict[str, str] = {
 
 BUILTIN_KEYS = frozenset(BUILTIN_ORDER_KEYS)
 
-# sort_order for built-ins: CANCELLED is sentinel last.
+# sort_order for built-in column seeds (sequential; CANCELLED is last by default, not a sentinel).
 SORT_TODO = 0
 SORT_IN_PROGRESS = 1
 SORT_COMPLETED = 2
-SORT_CANCELLED_SENTINEL = 9999
+SORT_CANCELLED = 3
 
 
 def status_css_slug(value: str) -> str:
@@ -89,7 +89,7 @@ def ensure_kanban_builtins(user: User) -> None:
         ("TODO", DEFAULT_BUILTIN_LABELS["TODO"], SORT_TODO),
         ("IN_PROGRESS", DEFAULT_BUILTIN_LABELS["IN_PROGRESS"], SORT_IN_PROGRESS),
         ("COMPLETED", DEFAULT_BUILTIN_LABELS["COMPLETED"], SORT_COMPLETED),
-        ("CANCELLED", DEFAULT_BUILTIN_LABELS["CANCELLED"], SORT_CANCELLED_SENTINEL),
+        ("CANCELLED", DEFAULT_BUILTIN_LABELS["CANCELLED"], SORT_CANCELLED),
     )
     for key, label, sort_order in seeds:
         KanbanColumnDefinition.objects.get_or_create(
@@ -111,7 +111,7 @@ def ensure_kanban_builtins_for_team(team: TaskTeam) -> None:
         ("TODO", DEFAULT_BUILTIN_LABELS["TODO"], SORT_TODO),
         ("IN_PROGRESS", DEFAULT_BUILTIN_LABELS["IN_PROGRESS"], SORT_IN_PROGRESS),
         ("COMPLETED", DEFAULT_BUILTIN_LABELS["COMPLETED"], SORT_COMPLETED),
-        ("CANCELLED", DEFAULT_BUILTIN_LABELS["CANCELLED"], SORT_CANCELLED_SENTINEL),
+        ("CANCELLED", DEFAULT_BUILTIN_LABELS["CANCELLED"], SORT_CANCELLED),
     )
     for key, label, sort_order in seeds:
         KanbanColumnDefinition.objects.get_or_create(
@@ -126,28 +126,22 @@ def ensure_kanban_builtins_for_team(team: TaskTeam) -> None:
 
 
 def next_custom_sort_order(user: User) -> int:
-    """Insert custom columns in 3..9998 before CANCELLED (9999)."""
+    """Next sort_order after the maximum of all columns for this board."""
+    from django.db.models import Max
+
     from basic_app.models import KanbanColumnDefinition
 
-    qs = KanbanColumnDefinition.objects.filter(user=user, sort_order__lt=SORT_CANCELLED_SENTINEL)
-    current = qs.order_by("-sort_order").values_list("sort_order", flat=True).first()
-    if current is None:
-        return 3
-    nxt = int(current) + 1
-    if nxt >= SORT_CANCELLED_SENTINEL:
-        return SORT_CANCELLED_SENTINEL - 1
-    return max(nxt, 3)
+    agg = KanbanColumnDefinition.objects.filter(user=user).aggregate(m=Max("sort_order"))
+    m = agg.get("m")
+    return 0 if m is None else int(m) + 1
 
 
 def next_custom_sort_order_for_team(team: TaskTeam) -> int:
-    """Insert custom columns for a team board before CANCELLED sentinel."""
+    """Next sort_order after the maximum of all columns for this team board."""
+    from django.db.models import Max
+
     from basic_app.models import KanbanColumnDefinition
 
-    qs = KanbanColumnDefinition.objects.filter(team=team, sort_order__lt=SORT_CANCELLED_SENTINEL)
-    current = qs.order_by("-sort_order").values_list("sort_order", flat=True).first()
-    if current is None:
-        return 3
-    nxt = int(current) + 1
-    if nxt >= SORT_CANCELLED_SENTINEL:
-        return SORT_CANCELLED_SENTINEL - 1
-    return max(nxt, 3)
+    agg = KanbanColumnDefinition.objects.filter(team=team).aggregate(m=Max("sort_order"))
+    m = agg.get("m")
+    return 0 if m is None else int(m) + 1

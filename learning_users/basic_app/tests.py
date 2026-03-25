@@ -144,14 +144,15 @@ class UserTasksKanbanViewTests(TestCase):
         response = self.client.get(reverse("basic_app:user_tasks_view"))
         self.assertEqual(response.context["usertasks"], [])
 
-    def test_kanban_cancelled_column_has_fixed_width_css_rule(self):
-        """Cancelled column is outside reorderable wrapper; CSS must not let it flex-grow."""
+    def test_kanban_cancelled_column_is_reorderable_in_same_container(self):
+        """CANCELLED uses the same reorderable column markup as other built-in columns."""
         response = self.client.get(reverse("basic_app:user_tasks_view"))
         self.assertEqual(response.status_code, 200)
         content = response.content.decode()
-        self.assertIn('data-kanban-fixed="1"', content)
+        self.assertNotIn('data-kanban-fixed="1"', content)
+        self.assertIn('data-kanban-status="CANCELLED"', content)
         self.assertIn(
-            ".kanban-board > .kanban-column[data-kanban-fixed]",
+            'data-kanban-status="CANCELLED" data-kanban-reorderable="1"',
             content,
         )
 
@@ -174,6 +175,9 @@ class UserTasksKanbanViewTests(TestCase):
 
     def test_custom_column_appears_before_cancelled_and_buckets_tasks(self):
         ensure_kanban_builtins(self.user)
+        KanbanColumnDefinition.objects.filter(user=self.user, key="CANCELLED").update(
+            sort_order=20
+        )
         KanbanColumnDefinition.objects.create(
             user=self.user,
             key="REVIEW",
@@ -186,7 +190,6 @@ class UserTasksKanbanViewTests(TestCase):
         response = self.client.get(reverse("basic_app:user_tasks_view"))
         statuses = [c["status"] for c in response.context["kanban_columns"]]
         self.assertIn("REVIEW", statuses)
-        self.assertEqual(statuses[-1], "CANCELLED")
         rev_idx = statuses.index("REVIEW")
         cancel_idx = statuses.index("CANCELLED")
         self.assertLess(rev_idx, cancel_idx)
@@ -231,7 +234,9 @@ class UserTasksKanbanViewTests(TestCase):
     def test_kanban_column_reorder_updates_board_order(self):
         ensure_kanban_builtins(self.user)
         url = reverse("basic_app:kanban_column_reorder")
-        body = {"columnKeys": ["IN_PROGRESS", "TODO", "COMPLETED"]}
+        body = {
+            "columnKeys": ["IN_PROGRESS", "TODO", "COMPLETED", "CANCELLED"],
+        }
         response = self.client.post(
             url,
             data=json.dumps(body),
@@ -248,13 +253,42 @@ class UserTasksKanbanViewTests(TestCase):
         )
         orders = list(
             KanbanColumnDefinition.objects.filter(user=self.user)
-            .exclude(key="CANCELLED")
             .order_by("sort_order", "key")
             .values_list("key", "sort_order")
         )
         self.assertEqual(
             orders,
-            [("IN_PROGRESS", 0), ("TODO", 1), ("COMPLETED", 2)],
+            [
+                ("IN_PROGRESS", 0),
+                ("TODO", 1),
+                ("COMPLETED", 2),
+                ("CANCELLED", 3),
+            ],
+        )
+
+    def test_kanban_column_reorder_can_put_cancelled_not_last(self):
+        ensure_kanban_builtins(self.user)
+        url = reverse("basic_app:kanban_column_reorder")
+        body = {
+            "columnKeys": [
+                "CANCELLED",
+                "TODO",
+                "IN_PROGRESS",
+                "COMPLETED",
+            ],
+        }
+        response = self.client.post(
+            url,
+            data=json.dumps(body),
+            content_type="application/json",
+            **self._csrf_header(),
+        )
+        self.assertEqual(response.status_code, 200)
+        response_get = self.client.get(reverse("basic_app:user_tasks_view"))
+        statuses = [c["status"] for c in response_get.context["kanban_columns"]]
+        self.assertEqual(
+            statuses,
+            ["CANCELLED", "TODO", "IN_PROGRESS", "COMPLETED"],
         )
 
     def test_kanban_column_reorder_out_of_sync_returns_code(self):
@@ -267,7 +301,7 @@ class UserTasksKanbanViewTests(TestCase):
             is_builtin=False,
         )
         url = reverse("basic_app:kanban_column_reorder")
-        body = {"columnKeys": ["IN_PROGRESS", "TODO", "COMPLETED"]}
+        body = {"columnKeys": ["IN_PROGRESS", "TODO", "COMPLETED", "CANCELLED"]}
         response = self.client.post(
             url,
             data=json.dumps(body),
@@ -306,7 +340,16 @@ class UserTasksKanbanViewTests(TestCase):
         anon = Client()
         response = anon.post(
             url,
-            data=json.dumps({"columnKeys": ["TODO", "IN_PROGRESS", "COMPLETED"]}),
+            data=json.dumps(
+                {
+                    "columnKeys": [
+                        "TODO",
+                        "IN_PROGRESS",
+                        "COMPLETED",
+                        "CANCELLED",
+                    ],
+                }
+            ),
             content_type="application/json",
         )
         self.assertEqual(response.status_code, 302)
@@ -406,7 +449,16 @@ class UserTasksKanbanViewTests(TestCase):
         anon = Client()
         response = anon.post(
             url,
-            data=json.dumps({"taskIdsByStatus": {"TODO": [], "IN_PROGRESS": [], "COMPLETED": []}}),
+            data=json.dumps(
+                {
+                    "taskIdsByStatus": {
+                        "TODO": [],
+                        "IN_PROGRESS": [],
+                        "COMPLETED": [],
+                        "CANCELLED": [],
+                    },
+                }
+            ),
             content_type="application/json",
         )
         self.assertEqual(response.status_code, 302)
@@ -461,7 +513,7 @@ class UserTasksKanbanViewTests(TestCase):
         ensure_kanban_builtins(self.user)
         response = self.client.get(reverse("basic_app:user_tasks_view"))
         keys = response.context["initial_reorderable_column_keys"]
-        self.assertEqual(keys, ["TODO", "IN_PROGRESS", "COMPLETED"])
+        self.assertEqual(keys, ["TODO", "IN_PROGRESS", "COMPLETED", "CANCELLED"])
 
     def test_kanban_board_does_not_duplicate_subtask_dom_nodes(self):
         parent = UserTask.objects.create(

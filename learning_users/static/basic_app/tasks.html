@@ -48,12 +48,8 @@
           {% endfor %}
         </div>
       </div>
-      {% endif %}
-    {% endfor %}
-    </div>
-    {% for column in kanban_columns %}
-      {% if not column.is_reorderable %}
-      <div class="kanban-column" data-kanban-status="{{ column.status }}"{% if column.status == "CANCELLED" %} data-kanban-fixed="1"{% endif %}>
+      {% else %}
+      <div class="kanban-column" data-kanban-status="{{ column.status }}">
         <div class="kanban-column-header">
           <span class="kanban-column-title">{{ column.label }}</span>
           <span class="kanban-column-count badge bg-secondary">{{ column.tasks|length }}</span>
@@ -76,6 +72,7 @@
       </div>
       {% endif %}
     {% endfor %}
+    </div>
   </div>
 </div>
 
@@ -186,7 +183,7 @@
     flex-wrap: nowrap;
     gap: 0.75rem;
     align-items: flex-start;
-    flex: 0 0 auto;
+    flex: 1 1 auto;
     min-width: 0;
   }
 
@@ -196,12 +193,6 @@
     background: #f8f9fa;
     border-radius: 0.5rem;
     border: 1px solid #dee2e6;
-  }
-
-  /* Direct child of board (e.g. Отменено): do not consume remaining row width */
-  .kanban-board > .kanban-column[data-kanban-fixed] {
-    flex: 0 1 min(320px, 100%);
-    min-width: 260px;
   }
 
   .kanban-column-header {
@@ -903,7 +894,7 @@
   function syncKanbanCardStatusesFromColumns() {
     var board = document.querySelector('.kanban-board');
     if (!board) return;
-    board.querySelectorAll('.kanban-column:not([data-kanban-fixed])').forEach(function(col) {
+    board.querySelectorAll('.kanban-column[data-kanban-status]').forEach(function(col) {
       var st = col.getAttribute('data-kanban-status');
       if (!st) return;
       col.querySelectorAll('.kanban-column-body .task-card[data-task-id]').forEach(function(card) {
@@ -924,7 +915,7 @@
     if (!board) return;
     var postUrl = board.getAttribute('data-kanban-task-reorder-url');
     if (!postUrl) return;
-    var cols = board.querySelectorAll('.kanban-column:not([data-kanban-fixed])');
+    var cols = board.querySelectorAll('.kanban-column[data-kanban-status]');
     var taskIdsByStatus = {};
     cols.forEach(function(col) {
       var st = col.getAttribute('data-kanban-status');
@@ -968,7 +959,7 @@
     if (!board || typeof Sortable === 'undefined') return;
     var postUrl = board.getAttribute('data-kanban-task-reorder-url');
     if (!postUrl) return;
-    var bodies = board.querySelectorAll('.kanban-column:not([data-kanban-fixed]) .kanban-column-body');
+    var bodies = board.querySelectorAll('.kanban-column[data-kanban-status] .kanban-column-body');
     bodies.forEach(function(body) {
       try {
         Sortable.create(body, {

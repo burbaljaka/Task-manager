@@ -470,16 +470,12 @@ def user_tasks_view(request):
     else:
         col_qs = KanbanColumnDefinition.objects.filter(team_id=scope.team_id)
 
-    def_keys_non_cancel = set(
-        col_qs.exclude(key="CANCELLED").values_list("key", flat=True)
-    )
+    def_keys = set(col_qs.values_list("key", flat=True))
     for col in kanban_columns:
-        col["is_reorderable"] = col["status"] in def_keys_non_cancel
+        col["is_reorderable"] = col["status"] in def_keys
 
     initial_reorderable_column_keys = list(
-        col_qs.exclude(key="CANCELLED")
-        .order_by("sort_order", "key")
-        .values_list("key", flat=True)
+        col_qs.order_by("sort_order", "key").values_list("key", flat=True)
     )
 
     status_options = [
@@ -616,9 +612,7 @@ def kanban_column_reorder(request):
         col_filter = {"user_id": request.user.id}
 
     expected_keys = sorted(
-        KanbanColumnDefinition.objects.filter(**col_filter)
-        .exclude(key="CANCELLED")
-        .values_list("key", flat=True)
+        KanbanColumnDefinition.objects.filter(**col_filter).values_list("key", flat=True)
     )
     received = list(body.column_keys)
     if len(received) != len(set(received)) or sorted(received) != expected_keys:

@@ -207,16 +207,11 @@ def build_kanban_columns_for_scope(
     statuses_in_tasks = set(non_completed_by_status.keys())
     orphan_keys = sorted(k for k in statuses_in_tasks if k not in def_keys)
 
-    non_cancel = [d for d in defs if d.key != "CANCELLED"]
-    cancel_row = next((d for d in defs if d.key == "CANCELLED"), None)
-
     merged: list[tuple[str, str]] = []
-    for d in non_cancel:
+    for d in defs:
         merged.append((d.key, d.label))
     for ok in orphan_keys:
         merged.append((ok, f"[{ok}]"))
-    if cancel_row:
-        merged.append((cancel_row.key, cancel_row.label))
 
     kanban_columns: list[dict] = []
     for key, label in merged:
@@ -239,8 +234,6 @@ def expected_task_ids_by_status_for_scope(scope: BoardScope) -> dict[str, list[i
     )
     out: dict[str, list[int]] = {}
     for col in kanban_columns:
-        if col["status"] == "CANCELLED":
-            continue
         out[col["status"]] = [t.id for t in col["tasks"]]
     return out
 
