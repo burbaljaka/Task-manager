@@ -144,6 +144,17 @@ class UserTasksKanbanViewTests(TestCase):
         response = self.client.get(reverse("basic_app:user_tasks_view"))
         self.assertEqual(response.context["usertasks"], [])
 
+    def test_kanban_cancelled_column_has_fixed_width_css_rule(self):
+        """Cancelled column is outside reorderable wrapper; CSS must not let it flex-grow."""
+        response = self.client.get(reverse("basic_app:user_tasks_view"))
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode()
+        self.assertIn('data-kanban-fixed="1"', content)
+        self.assertIn(
+            ".kanban-board > .kanban-column[data-kanban-fixed]",
+            content,
+        )
+
     def test_tasks_bucketed_by_status(self):
         UserTask.objects.create(user=self.user, name="t1", status="TODO")
         UserTask.objects.create(user=self.user, name="t2", status="IN_PROGRESS")

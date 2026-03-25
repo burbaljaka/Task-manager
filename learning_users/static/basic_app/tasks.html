@@ -198,6 +198,12 @@
     border: 1px solid #dee2e6;
   }
 
+  /* Direct child of board (e.g. Отменено): do not consume remaining row width */
+  .kanban-board > .kanban-column[data-kanban-fixed] {
+    flex: 0 1 min(320px, 100%);
+    min-width: 260px;
+  }
+
   .kanban-column-header {
     display: flex;
     align-items: center;
