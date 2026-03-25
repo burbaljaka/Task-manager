@@ -140,6 +140,13 @@ class TaskTeamAdmin(SuperuserOnlyAdminMixin, admin.ModelAdmin):
     search_fields = ("name", "slug", "description")
     inlines = (TaskTeamMembershipInline,)
 
+    def get_deleted_objects(self, objs, request):
+        deleted_objects, model_count, perms_needed, protected = super().get_deleted_objects(
+            objs, request
+        )
+        perms_needed.discard(KanbanColumnDefinition._meta.verbose_name)
+        return deleted_objects, model_count, perms_needed, protected
+
     def save_model(self, request, obj, form, change):
         super().save_model(request, obj, form, change)
         ensure_kanban_builtins_for_team(obj)

@@ -780,3 +780,91 @@ class TaskTeamAdminPermissionTests(TestCase):
         url = reverse("admin:basic_app_taskteam_changelist")
         response = self.client.get(url)
         self.assertEqual(response.status_code, 200)
+
+
+class TaskTeamAdminDeleteTests(TestCase):
+    def setUp(self):
+        self.client = Client()
+        self.superuser = User.objects.create_superuser(
+            username="admin", password="pass12345", email="admin@example.com"
+        )
+        self.member = User.objects.create_user(username="member", password="pass12345")
+
+    def _login_superuser(self) -> None:
+        self.client.force_login(self.superuser)
+
+    def _task_team_delete_url(self, pk: int) -> str:
+        return reverse("admin:basic_app_taskteam_delete", args=[pk])
+
+    def test_admin_delete_team_with_builtin_columns_only_succeeds(self):
+        team = TaskTeam.objects.create(name="TeamBuiltins")
+        ensure_kanban_builtins_for_team(team)
+        self.assertEqual(KanbanColumnDefinition.objects.filter(team=team).count(), 4)
+        self._login_superuser()
+        response = self.client.post(self._task_team_delete_url(team.pk), {"post": "yes"})
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(TaskTeam.objects.filter(pk=team.pk).exists())
+        self.assertEqual(KanbanColumnDefinition.objects.filter(team_id=team.pk).count(), 0)
+
+    def test_admin_delete_team_with_tasks_referencing_columns_succeeds_and_tasks_survive(self):
+        team = TaskTeam.objects.create(name="TeamWithTasks")
+        TaskTeamMembership.objects.create(team=team, user=self.member)
+        ensure_kanban_builtins_for_team(team)
+        task = UserTask.objects.create(
+            user=self.member, name="team task", status="TODO", team=team
+        )
+        self._login_superuser()
+        response = self.client.post(self._task_team_delete_url(team.pk), {"post": "yes"})
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(TaskTeam.objects.filter(pk=team.pk).exists())
+        task.refresh_from_db()
+        self.assertIsNone(task.team_id)
+        self.assertEqual(task.status, "TODO")
+
+    def test_admin_delete_team_leaves_other_team_kanban_columns_intact(self):
+        team_a = TaskTeam.objects.create(name="TeamA")
+        team_b = TaskTeam.objects.create(name="TeamB")
+        ensure_kanban_builtins_for_team(team_a)
+        ensure_kanban_builtins_for_team(team_b)
+        b_keys = set(
+            KanbanColumnDefinition.objects.filter(team=team_b).values_list("key", flat=True)
+        )
+        self._login_superuser()
+        response = self.client.post(self._task_team_delete_url(team_a.pk), {"post": "yes"})
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(TaskTeam.objects.filter(pk=team_a.pk).exists())
+        self.assertTrue(TaskTeam.objects.filter(pk=team_b.pk).exists())
+        b_keys_after = set(
+            KanbanColumnDefinition.objects.filter(team=team_b).values_list("key", flat=True)
+        )
+        self.assertEqual(b_keys_after, b_keys)
+
+    def test_bulk_delete_selected_teams_succeeds(self):
+        t1 = TaskTeam.objects.create(name="BulkOne")
+        t2 = TaskTeam.objects.create(name="BulkTwo")
+        ensure_kanban_builtins_for_team(t1)
+        ensure_kanban_builtins_for_team(t2)
+        changelist = reverse("admin:basic_app_taskteam_changelist")
+        self._login_superuser()
+        confirm = self.client.post(
+            changelist,
+            {
+                "action": "delete_selected",
+                "select_across": "0",
+                "_selected_action": [str(t1.pk), str(t2.pk)],
+                "index": "0",
+            },
+        )
+        self.assertEqual(confirm.status_code, 200)
+        deleted = self.client.post(
+            changelist,
+            {
+                "action": "delete_selected",
+                "select_across": "0",
+                "_selected_action": [str(t1.pk), str(t2.pk)],
+                "post": "yes",
+                "index": "0",
+            },
+        )
+        self.assertEqual(deleted.status_code, 302)
+        self.assertFalse(TaskTeam.objects.filter(pk__in=[t1.pk, t2.pk]).exists())
