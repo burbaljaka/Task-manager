@@ -20,7 +20,7 @@
       <button type="button" class="btn btn-outline-primary btn-sm rounded-pill" data-bs-toggle="modal" data-bs-target="#addKanbanColumnModal">+ Добавить колонку</button>
     </div>
   </div>
-  <p class="text-muted small mb-3" id="kanban-board-help">Колонки доски (настроенные в определениях колонок) можно менять местами, перетаскивая за ручку слева от названия. Порядок карточек внутри колонки и между колонками задаётся перетаскиванием карточки за ручку слева от номера задачи; при необходимости статус и срок по-прежнему можно менять полями на карточке.</p>
+  <p class="text-muted small mb-3" id="kanban-board-help">Колонки доски (настроенные в определениях колонок) можно менять местами, перетаскивая за ручку слева от названия. Порядок карточек внутри колонки и между колонками задаётся перетаскиванием карточки за ручку слева от номера задачи; при необходимости статус и срок по-прежнему можно менять полями на карточке. Учёт времени по задаче ведётся на странице задачи (ссылка по номеру #).</p>
   {{ initial_reorderable_column_keys|json_script:"kanban-initial-reorderable-keys" }}
   <div class="kanban-board" data-kanban-reorder-url="{% url 'basic_app:kanban_column_reorder' %}" data-kanban-task-reorder-url="{% url 'basic_app:kanban_task_reorder' %}" data-board-team="{% if board_team_id %}{{ board_team_id }}{% endif %}">
     <div class="kanban-board-reorderable" aria-label="Настроенные колонки доски">
@@ -1011,101 +1011,6 @@
       if (typeof console !== 'undefined' && console.warn) {
         console.warn('Kanban board non-completed count mismatch: counter=' + counter + ' boardNonCompleted=' + nonCompletedOnBoard);
       }
-    }
-    if (counter !== 0 || boardCards.length > 0) {
-      // Build parent-child map first
-      buildParentChildMap();
-      
-      var taskCards = document.querySelectorAll('.task-card[data-task-id]');
-      taskCards.forEach(function(card) {
-        var taskId = card.getAttribute('data-task-id');
-        var isCounting = card.getAttribute('data-is-counting') === '1';
-        var timerValue = parseInt(card.getAttribute('data-timer') || '0');
-        
-        updateTimerDisplay(taskId, timerValue);
-        updateTodayTime(taskId, card.getAttribute('data-today-seconds') || '0');
-        
-        if (isCounting) {
-          startTaskTimer(taskId, timerValue);
-          var startBtn = card.querySelector('[name="start_button"]');
-          var stopBtn = card.querySelector('[name="stop_button"]');
-          if (startBtn) startBtn.style.display = 'none';
-          if (stopBtn) stopBtn.style.display = 'block';
-        }
-      });
-    }
-  }
-
-
-  function updateTimerDisplay(taskId, seconds) {
-    var hoursEl = document.getElementById("hours-" + taskId);
-    var minutesEl = document.getElementById("minutes-" + taskId);
-    var secondsEl = document.getElementById("seconds-" + taskId);
-    if (hoursEl && minutesEl && secondsEl) {
-      secondsEl.innerText = pad(Math.floor(seconds % 60));
-      minutesEl.innerText = pad(Math.floor(seconds % 3600 / 60));
-      hoursEl.innerText = pad(Math.floor(seconds / 3600));
-    }
-  }
-
-  function updateTodayTime(taskId, seconds) {
-    var todayEl = document.querySelector('[data-today-time="' + taskId + '"]');
-    if (todayEl && seconds) {
-      var sec = parseInt(seconds);
-      todayEl.textContent = pad(Math.floor(sec / 3600)) + ":" + 
-                           pad(Math.floor(sec % 3600 / 60)) + ":" + 
-                           pad(Math.floor(sec % 60));
-    }
-  }
-
-  var activeTimers = {};
-  var taskParentMap = {}; // Map taskId to parent task card element
-
-  // Build parent-child relationships on page load
-  function buildParentChildMap() {
-    var taskCards = document.querySelectorAll('.task-card[data-task-id]');
-    taskCards.forEach(function(card) {
-      var taskId = card.getAttribute('data-task-id');
-      var parentId = card.getAttribute('data-parent-task-id');
-      if (parentId) {
-        taskParentMap[taskId] = parentId;
-      }
-    });
-  }
-
-  function updateParentTimers(taskId, additionalSeconds) {
-    // Update all parent tasks up the tree
-    var currentTaskId = taskId;
-    while (taskParentMap[currentTaskId]) {
-      var parentId = taskParentMap[currentTaskId];
-      var parentCard = document.querySelector('.task-card[data-task-id="' + parentId + '"]');
-      if (parentCard) {
-        var currentParentTimer = parseInt(parentCard.getAttribute('data-timer') || '0');
-        var newParentTimer = currentParentTimer + additionalSeconds;
-        parentCard.setAttribute('data-timer', newParentTimer);
-        updateTimerDisplay(parentId, newParentTimer);
-      }
-      currentTaskId = parentId;
-    }
-  }
-
-  function startTaskTimer(taskId, initialSeconds) {
-    if (activeTimers[taskId]) {
-      clearInterval(activeTimers[taskId]);
-    }
-    var sec = initialSeconds || 0;
-    activeTimers[taskId] = setInterval(function(){
-      sec++;
-      updateTimerDisplay(taskId, sec);
-      // Update parent timers as well
-      updateParentTimers(taskId, 1);
-    }, 1000);
-  }
-
-  function stopTaskTimer(taskId) {
-    if (activeTimers[taskId]) {
-      clearInterval(activeTimers[taskId]);
-      delete activeTimers[taskId];
     }
   }
 

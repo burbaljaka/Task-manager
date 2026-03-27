@@ -1,11 +1,8 @@
 {% load task_extras %}
 {% if task %}
-<div class="task-card{% if level > 0 %} subtask-card{% endif %}{% if task.is_counting %} running-task{% endif %}{% if task.status not in builtin_status_keys %} task-card--status-unknown{% endif %}" 
+<div class="task-card{% if level > 0 %} subtask-card{% endif %}{% if task.status not in builtin_status_keys %} task-card--status-unknown{% endif %}" 
      data-task-id="{{ task.id }}" 
      data-task-status="{{ task.status }}"
-     data-is-counting="{{ task.is_counting }}" 
-     data-timer="{{ task.total_timer|default:task.timer }}" 
-     data-today-seconds="{{ task.today_seconds|default:0 }}"
      {% if task.parent_task %}data-parent-task-id="{{ task.parent_task.id }}"{% endif %}>
   <div class="task-card-body">
     <form action="{% url 'basic_app:user_tasks_view' %}{% if board_team_id %}?team={{ board_team_id }}{% endif %}" name="form-{{ task.id }}" method="POST" autocomplete="off">
@@ -15,9 +12,7 @@
       <!-- Metadata Bar -->
       <div class="task-metadata-bar">
         <button type="button" class="task-card-drag-handle btn btn-link p-0 text-secondary" aria-label="Переместить задачу" title="Перетащите, чтобы изменить порядок или колонку" tabindex="0">&#8942;&#8942;</button>
-        <a href="{% url 'basic_app:task_detail' task.id %}"
-           target="_blank"
-           rel="noopener noreferrer"
+        <a href="{% url 'basic_app:task_detail' task.id %}{% if board_team_id %}?team={{ board_team_id }}{% endif %}"
            class="task-ref-badge"
            title="Открыть задачу #{{ task.id }}">#{{ task.id }}</a>
         {% if is_team_board %}
@@ -92,16 +87,8 @@
           {% endif %}
         </div>
         
-        <!-- Timer Section -->
-        <div class="task-timer-section">
-          <label id="hours-{{ task.id }}">00</label>:<label id="minutes-{{ task.id }}">00</label>:<label id="seconds-{{ task.id }}">00</label>
-          <span class="ms-2 text-primary small">Сегодня: <span class="today-time" data-today-time="{{ task.id }}" data-seconds="{{ task.today_seconds|default:0 }}">00:00:00</span></span>
-        </div>
-        
         <!-- Action Buttons -->
         <div class="task-actions">
-          <button type="submit" name="start_button" class="btn btn-outline-primary btn-sm rounded-pill me-1" style="display:block;">▶</button>
-          <button type="submit" name="stop_button" class="btn stop-btn btn-sm rounded-pill me-1" style="display:none;">■</button>
           <button type="button" class="btn btn-outline-info btn-sm rounded-pill me-1" onclick="create_subtask({{ task.id }})" title="Добавить подзадачу">+</button>
           <button type="button" name="delete_button-{{ task.id }}" class="btn btn-outline-danger btn-sm rounded-pill" onclick="delete_task(this.name)">×</button>
         </div>

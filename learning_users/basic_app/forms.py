@@ -123,6 +123,7 @@ class UserTaskForm(forms.ModelForm):
                     if subtask_ids:
                         parent_queryset = parent_queryset.exclude(id__in=subtask_ids)
             self.fields['parent_task'].queryset = parent_queryset
+            self.fields["parent_task"].widget.attrs.setdefault("class", "form-select")
 
     def clean(self):
         cleaned_data = super().clean()

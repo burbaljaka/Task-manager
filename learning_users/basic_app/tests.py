@@ -535,7 +535,7 @@ class UserTasksKanbanViewTests(TestCase):
             "Subtask must appear exactly once (column card only; not nested under parent).",
         )
 
-    def test_kanban_task_card_has_task_detail_link_with_target_blank(self):
+    def test_kanban_task_card_links_task_detail_same_tab(self):
         task = UserTask.objects.create(user=self.user, name="Linkable", status="TODO")
         response = self.client.get(reverse("basic_app:user_tasks_view"))
         self.assertEqual(response.status_code, 200)
@@ -543,8 +543,7 @@ class UserTasksKanbanViewTests(TestCase):
         detail_url = reverse("basic_app:task_detail", kwargs={"task_id": task.id})
         self.assertIn(detail_url, html)
         self.assertIn(f'href="{detail_url}"', html)
-        self.assertIn('target="_blank"', html)
-        self.assertIn('rel="noopener noreferrer"', html)
+        self.assertNotIn('target="_blank"', html)
         self.assertIn(f"#{task.id}", html)
 
 
@@ -730,6 +729,7 @@ class TaskDetailViewTests(TestCase):
             status="IN_PROGRESS",
             comment="Note",
         )
+        ensure_kanban_builtins(self.owner)
 
     def test_owner_gets_200_and_sees_task_fields(self):
         self.client.login(username="owner", password="pass12345")
@@ -737,12 +737,130 @@ class TaskDetailViewTests(TestCase):
         response = self.client.get(url)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.context["task"].id, self.task.id)
+        self.assertEqual(len(response.context["status_options"]), 4)
         html = response.content.decode()
         self.assertIn(f"#{self.task.id}", html)
         self.assertIn("My task", html)
         self.assertIn("В работе", html)
         self.assertIn("Средний", html)
         self.assertIn("Note", html)
+
+    def test_post_save_redirects_to_detail(self):
+        self.client.login(username="owner", password="pass12345")
+        url = reverse("basic_app:task_detail", kwargs={"task_id": self.task.id})
+        response = self.client.post(
+            url,
+            {
+                "id": str(self.task.id),
+                "name": "Renamed",
+                "timer": "0",
+                "status": "TODO",
+                "priority": "2",
+                "comment": "Note",
+                "fordelete": "No",
+                "is_counting": "0",
+                "partnumber": "0",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        self.task.refresh_from_db()
+        self.assertEqual(self.task.name, "Renamed")
+        self.assertEqual(response.url, url)
+
+    def test_post_invalid_form_renders_200_with_errors_no_redirect(self):
+        self.client.login(username="owner", password="pass12345")
+        url = reverse("basic_app:task_detail", kwargs={"task_id": self.task.id})
+        response = self.client.post(
+            url,
+            {
+                "id": str(self.task.id),
+                "name": "My task",
+                "timer": "0",
+                "status": "TODO",
+                "priority": "99",
+                "comment": "Note",
+                "fordelete": "No",
+                "is_counting": "0",
+                "partnumber": "0",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.context["task_form"].is_valid())
+        self.assertIn("priority", response.context["task_form"].errors)
+        self.task.refresh_from_db()
+        self.assertEqual(self.task.name, "My task")
+
+    def test_post_stop_timer_unknown_partnumber_redirects_without_500(self):
+        self.client.login(username="owner", password="pass12345")
+        url = reverse("basic_app:task_detail", kwargs={"task_id": self.task.id})
+        response = self.client.post(
+            url,
+            {
+                "stop_button": "1",
+                "partnumber": "999999999",
+                "timer": "0",
+            },
+        )
+        self.assertNotEqual(response.status_code, 500)
+        self.assertEqual(response.status_code, 302)
+
+    def test_post_timer_start_ignores_wrong_task_id(self):
+        self.client.login(username="owner", password="pass12345")
+        other_task = UserTask.objects.create(
+            user=self.owner,
+            name="Other",
+            status="TODO",
+        )
+        url = reverse("basic_app:task_detail", kwargs={"task_id": self.task.id})
+        self.client.post(
+            url,
+            {
+                "start_button": "1",
+                "name": other_task.name,
+                "id": str(other_task.id),
+                "timer": "0",
+            },
+        )
+        other_task.refresh_from_db()
+        self.assertEqual(other_task.is_counting, 0)
+
+    def test_team_task_post_assignee_and_team_query(self):
+        team = TaskTeam.objects.create(name="DetailTeam")
+        TaskTeamMembership.objects.create(team=team, user=self.owner)
+        member = User.objects.create_user(username="assignee_u", password="pass12345")
+        TaskTeamMembership.objects.create(team=team, user=member)
+        ensure_kanban_builtins_for_team(team)
+        team_task = UserTask.objects.create(
+            user=self.owner,
+            name="Team task",
+            status="TODO",
+            team=team,
+            assignee=self.owner,
+        )
+        self.client.login(username="owner", password="pass12345")
+        url = reverse("basic_app:task_detail", kwargs={"task_id": team_task.id})
+        detail_with_team = f"{url}?team={team.id}"
+        response = self.client.get(detail_with_team)
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.context["is_team_board"])
+        self.client.post(
+            detail_with_team,
+            {
+                "id": str(team_task.id),
+                "name": team_task.name,
+                "timer": "0",
+                "status": "TODO",
+                "priority": "2",
+                "comment": "",
+                "fordelete": "No",
+                "is_counting": "0",
+                "partnumber": "0",
+                "assignee": str(member.id),
+                "team": str(team.id),
+            },
+        )
+        team_task.refresh_from_db()
+        self.assertEqual(team_task.assignee_id, member.id)
 
     def test_other_user_gets_404(self):
         self.client.login(username="other", password="pass12345")

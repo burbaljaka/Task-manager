@@ -1,6 +1,7 @@
 from collections import Counter
 import json
 import logging
+from urllib.parse import urlencode
 import re
 from django.contrib import messages
 from django.core.exceptions import PermissionDenied, ValidationError as DjangoValidationError
@@ -86,6 +87,342 @@ def task_snapshot_matches_expected(
         exp_union.update(expected[k])
         rec_union.update(received[k])
     return exp_union == rec_union
+
+
+def _enrich_task_timer_and_due_helpers(
+    task: UserTask, current_user_id: int, today: datetime.date
+) -> None:
+    """Set today_seconds, total_timer, due_date_* on task; recurse into subtasks_list."""
+    today_parts = PartTask.objects.filter(
+        usertask_id=task.id, user_id=current_user_id, date_start=today
+    )
+    task.today_seconds = sum(p.time_length for p in today_parts)
+    task.total_timer = task.timer
+
+    if task.is_counting and task.partnumber:
+        try:
+            running_part = PartTask.objects.get(pk=task.partnumber)
+            if running_part.datetime_stop.year == 1 or running_part.datetime_stop.year < 2000:
+                running_time = (
+                    datetime.datetime.now() - running_part.datetime_start
+                ).total_seconds()
+                task.today_seconds += int(running_time)
+                task.total_timer += int(running_time)
+        except (PartTask.DoesNotExist, AttributeError):
+            pass
+
+    subtask_total_time = 0
+    subtask_today_time = 0
+    if hasattr(task, "subtasks_list") and task.subtasks_list:
+        for subtask in task.subtasks_list:
+            _enrich_task_timer_and_due_helpers(subtask, current_user_id, today)
+            subtask_total_time += getattr(subtask, "total_timer", subtask.timer)
+            subtask_today_time += getattr(subtask, "today_seconds", 0)
+
+    task.total_timer += subtask_total_time
+    task.today_seconds += subtask_today_time
+
+    if task.due_date:
+        days_diff = (task.due_date - today).days
+        if days_diff < 0:
+            task.due_date_class = "due-date-overdue"
+            task.due_date_text = (
+                f"{task.due_date.strftime('%d.%m.%Y')} ({abs(days_diff)} дн. назад)"
+            )
+        elif days_diff == 0:
+            task.due_date_class = "due-date-today"
+            task.due_date_text = "Сегодня"
+        elif days_diff <= 3:
+            task.due_date_class = "due-date-soon"
+            task.due_date_text = f"осталось {days_diff} дн."
+        else:
+            task.due_date_class = "due-date-normal"
+            task.due_date_text = task.due_date.strftime("%d.%m.%Y")
+    else:
+        task.due_date_class = "due-date-none"
+        task.due_date_text = None
+
+
+def _handle_timer_start(
+    request,
+    user: User,
+    current_user_id: int,
+    *,
+    expected_task_id: int | None = None,
+) -> None:
+    form = StartTaskForm(request.POST)
+    if not form.is_valid():
+        logger.debug("Start task form invalid: %s", form.errors)
+        return
+    ident = form.cleaned_data["id"]
+    if expected_task_id is not None and ident != expected_task_id:
+        return
+    try:
+        usertask = UserTask.objects.get(pk=ident)
+    except UserTask.DoesNotExist:
+        usertask = None
+    if not usertask or not user_can_access_task(user, usertask):
+        return
+    date_start = datetime.date.today()
+    time_start = datetime.datetime.now().time()
+    datetime_start = timezone.now()
+    parttask = PartTask(
+        usertask_id=ident,
+        user_id=current_user_id,
+        time_start=time_start,
+        date_start=date_start,
+        datetime_start=datetime_start,
+    )
+    parttask.save()
+
+    team_ids = TaskTeamMembership.objects.filter(user_id=current_user_id).values_list(
+        "team_id", flat=True
+    )
+    running_task = UserTask.objects.filter(is_counting=1).filter(
+        Q(user_id=current_user_id, team__isnull=True) | Q(team_id__in=team_ids)
+    )
+    if len(running_task) > 0:
+        running_parttask = PartTask.objects.get(pk=running_task[0].partnumber)
+        running_parttask.date_stop = datetime.date.today()
+        running_parttask.time_stop = datetime.datetime.now().time()
+        running_parttask.datetime_stop = timezone.now()
+        running_parttask.time_length = (
+            running_parttask.datetime_stop - running_parttask.datetime_start
+        ).total_seconds()
+        running_parttask.save()
+
+        running_task[0].timer += running_parttask.time_length
+        running_task[0].is_counting = 0
+        running_task[0].save()
+
+    usertask.partnumber = parttask.pk
+    usertask.is_counting = 1
+    usertask.save()
+
+
+def _handle_timer_stop(
+    request,
+    user: User,
+    *,
+    expected_task_id: int | None = None,
+) -> None:
+    form = StopTaskForm(request.POST)
+    if not form.is_valid():
+        logger.debug("Stop task form invalid: %s", form.errors)
+        return
+    partnumber = form.cleaned_data["partnumber"]
+    try:
+        parttask = PartTask.objects.get(pk=partnumber)
+    except PartTask.DoesNotExist:
+        logger.debug("Stop timer: PartTask id=%s not found", partnumber)
+        return
+    try:
+        usertask = UserTask.objects.get(pk=parttask.usertask_id)
+    except UserTask.DoesNotExist:
+        logger.debug(
+            "Stop timer: UserTask id=%s not found for PartTask id=%s",
+            parttask.usertask_id,
+            partnumber,
+        )
+        return
+    if not user_can_access_task(user, usertask):
+        return
+    if expected_task_id is not None and usertask.id != expected_task_id:
+        return
+    parttask.date_stop = datetime.date.today()
+    parttask.time_stop = datetime.datetime.now().time()
+    parttask.datetime_stop = timezone.now()
+    parttask.time_length = (
+        parttask.datetime_stop - parttask.datetime_start
+    ).total_seconds()
+    parttask.save()
+
+    usertask.timer += parttask.time_length
+    usertask.is_counting = 0
+    usertask.save()
+
+
+def _apply_user_task_form_post(
+    request,
+    *,
+    user: User,
+    team_id: int | None,
+    fixed_task_id: int | None = None,
+) -> tuple[bool, UserTaskForm]:
+    form_kwargs: dict = {"user": user, "team_id": team_id}
+    if fixed_task_id is not None:
+        form_kwargs["task_id"] = fixed_task_id
+    form = UserTaskForm(request.POST, **form_kwargs)
+    if not form.instance.pk:
+        form.instance.user = user
+    if not form.is_valid():
+        logger.debug("User task form invalid: %s", form.errors)
+        return False, form
+
+    ident = form.cleaned_data.get("id", 0)
+    to_delete = form.cleaned_data.get("fordelete", "No")
+
+    if fixed_task_id is not None:
+        if not ident or ident != fixed_task_id:
+            return False, form
+
+    if ident and ident != 0:
+        try:
+            userform = UserTask.objects.get(pk=ident)
+            if not user_can_access_task(user, userform):
+                return False, form
+            if to_delete == "Yes":
+                userform.to_show = 0
+                userform.save()
+                return True, form
+            userform.name = form.cleaned_data["name"]
+            userform.timer = form.cleaned_data["timer"]
+            userform.status = form.cleaned_data.get("status", "TODO")
+            userform.due_date = form.cleaned_data.get("due_date")
+            userform.priority = form.cleaned_data.get("priority", 2)
+            userform.comment = form.cleaned_data.get("comment", "")
+            userform.parent_task = form.cleaned_data.get("parent_task")
+            if team_id:
+                userform.assignee = form.cleaned_data.get("assignee")
+            userform.save()
+            return True, form
+        except UserTask.DoesNotExist:
+            return False, form
+    else:
+        task_name = form.cleaned_data.get("name", "").strip()
+        parent_task = None
+        if task_name:
+            parent_task = form.cleaned_data.get("parent_task")
+            if parent_task:
+                try:
+                    parent_task = UserTask.objects.get(pk=parent_task.pk)
+                    if team_id:
+                        if parent_task.team_id != team_id:
+                            form.add_error(
+                                "parent_task",
+                                "Родительская задача должна относиться к этой команде.",
+                            )
+                            parent_task = None
+                    elif parent_task.user != user or parent_task.team_id:
+                        form.add_error(
+                            "parent_task",
+                            "Родительская задача должна принадлежать тому же пользователю.",
+                        )
+                        parent_task = None
+                except UserTask.DoesNotExist:
+                    form.add_error("parent_task", "Родительская задача не найдена.")
+                    parent_task = None
+
+        if not form.errors:
+            new_status = form.cleaned_data.get("status", "TODO")
+            userform = UserTask(
+                name=form.cleaned_data["name"],
+                user=user,
+                team_id=team_id,
+                assignee=form.cleaned_data.get("assignee") if team_id else None,
+                timer=form.cleaned_data.get("timer", 0),
+                status=new_status,
+                due_date=form.cleaned_data.get("due_date"),
+                priority=form.cleaned_data.get("priority", 2),
+                comment=form.cleaned_data.get("comment", ""),
+                parent_task=parent_task,
+                kanban_position=next_kanban_position_for_scope(
+                    BoardScope(user_id=user.id, team_id=team_id), new_status
+                ),
+            )
+            userform.save()
+            return True, form
+        return False, form
+
+
+def _task_detail_team_query_value(request, task: UserTask) -> str | None:
+    if task.team_id is None:
+        return None
+    raw = (request.POST.get("team") or request.GET.get("team") or "").strip()
+    if raw:
+        try:
+            tid = int(raw)
+            if tid == task.team_id and TaskTeamMembership.objects.filter(
+                team_id=task.team_id, user_id=request.user.id
+            ).exists():
+                return str(task.team_id)
+        except ValueError:
+            pass
+    return str(task.team_id)
+
+
+def _task_detail_redirect(request, task: UserTask):
+    url = reverse("basic_app:task_detail", kwargs={"task_id": task.id})
+    team_q = _task_detail_team_query_value(request, task)
+    if team_q:
+        url = f"{url}?{urlencode({'team': team_q})}"
+    return redirect(url)
+
+
+def _task_detail_build_context(
+    request,
+    task: UserTask,
+    *,
+    task_form_override: UserTaskForm | None = None,
+) -> dict:
+    current_user_id = request.user.id
+    if task.team_id:
+        ensure_kanban_builtins_for_team(TaskTeam.objects.get(pk=task.team_id))
+        col_qs = KanbanColumnDefinition.objects.filter(team_id=task.team_id).order_by(
+            "sort_order", "key"
+        )
+    else:
+        ensure_kanban_builtins(request.user)
+        col_qs = KanbanColumnDefinition.objects.filter(user_id=current_user_id).order_by(
+            "sort_order", "key"
+        )
+
+    status_options = [{"key": d.key, "label": d.label} for d in col_qs]
+
+    team_member_options: list[dict] = []
+    if task.team_id:
+        team_member_options = [
+            {"id": u.id, "username": u.get_username()}
+            for u in User.objects.filter(
+                id__in=TaskTeamMembership.objects.filter(team_id=task.team_id).values_list(
+                    "user_id", flat=True
+                )
+            ).order_by("username")
+        ]
+
+    today = datetime.date.today()
+    subtasks_qs = task.get_subtasks().select_related("parent_task", "assignee", "user")
+    task.subtasks_list = list(subtasks_qs)
+    for st in task.subtasks_list:
+        st.subtasks_list = []
+    _enrich_task_timer_and_due_helpers(task, current_user_id, today)
+
+    task_form = task_form_override or UserTaskForm(
+        instance=task,
+        user=request.user,
+        team_id=task.team_id,
+        task_id=task.id,
+    )
+
+    user_teams = list(
+        TaskTeam.objects.filter(
+            memberships__user_id=current_user_id,
+        ).order_by("name").distinct()
+    )
+
+    return {
+        "task": task,
+        "task_form": task_form,
+        "status_options": status_options,
+        "team_member_options": team_member_options,
+        "is_team_board": task.team_id is not None,
+        "board_team_id": task.team_id,
+        "builtin_status_keys": BUILTIN_KEYS,
+        "priority_choices": UserTask.PRIORITY_CHOICES,
+        "team_query": _task_detail_team_query_value(request, task),
+        "subtasks": task.subtasks_list,
+        "user_teams": user_teams,
+    }
 
 
 def index(request):
@@ -222,144 +559,18 @@ def user_tasks_view(request):
                 if parttask.usertask_id == task.id:
                     task.timer = round((datetime.datetime.now() - parttask.datetime_start).total_seconds())
 
-    if request.method == "POST" and 'start_button' in request.POST:
-        form = StartTaskForm(request.POST)
-        if form.is_valid():
-            ident = form.cleaned_data['id']
-            try:
-                usertask = UserTask.objects.get(pk=ident)
-            except UserTask.DoesNotExist:
-                usertask = None
-            if usertask and user_can_access_task(request.user, usertask):
-                date_start = datetime.date.today()
-                time_start = datetime.datetime.now().time()
-                datetime_start = timezone.now()
-                parttask = PartTask(usertask_id=ident, user_id=current_user_id,
-                                    time_start=time_start, date_start=date_start, datetime_start=datetime_start)
-                parttask.save()
+    if request.method == "POST" and "start_button" in request.POST:
+        _handle_timer_start(request, request.user, current_user_id)
 
-                team_ids = TaskTeamMembership.objects.filter(user_id=current_user_id).values_list(
-                    "team_id", flat=True
-                )
-                running_task = UserTask.objects.filter(is_counting=1).filter(
-                    Q(user_id=current_user_id, team__isnull=True)
-                    | Q(team_id__in=team_ids)
-                )
-                if len(running_task) > 0:
-                    running_parttask = PartTask.objects.get(pk=running_task[0].partnumber)
-                    running_parttask.date_stop = datetime.date.today()
-                    running_parttask.time_stop = datetime.datetime.now().time()
-                    running_parttask.datetime_stop = timezone.now()
-                    running_parttask.time_length = (
-                            running_parttask.datetime_stop - running_parttask.datetime_start).total_seconds()
-                    running_parttask.save()
-
-                    running_task[0].timer += running_parttask.time_length
-                    running_task[0].is_counting = 0
-                    running_task[0].save()
-
-                usertask.partnumber = parttask.pk
-                usertask.is_counting = 1
-                usertask.save()
-        else:
-            print(form)
-
-    elif request.method == "POST" and 'stop_button' in request.POST:
-        form = StopTaskForm(request.POST)
-        if form.is_valid():
-            partnumber = form.cleaned_data['partnumber']
-            parttask = PartTask.objects.get(pk=partnumber)
-            parttask.date_stop = datetime.date.today()
-            parttask.time_stop = datetime.datetime.now().time()
-            parttask.datetime_stop = timezone.now()
-            parttask.time_length = (parttask.datetime_stop - parttask.datetime_start).total_seconds()
-            parttask.save()
-
-            usertask = UserTask.objects.get(pk=parttask.usertask_id)
-            if user_can_access_task(request.user, usertask):
-                usertask.timer += parttask.time_length
-                usertask.is_counting = 0
-                usertask.save()
-        else:
-            print(form)
+    elif request.method == "POST" and "stop_button" in request.POST:
+        _handle_timer_stop(request, request.user)
 
     elif request.method == "POST":
-        form = UserTaskForm(
-            request.POST,
+        _apply_user_task_form_post(
+            request,
             user=request.user,
             team_id=scope.team_id,
         )
-        if not form.instance.pk:
-            form.instance.user = request.user
-        if form.is_valid():
-            ident = form.cleaned_data.get('id', 0)
-            to_delete = form.cleaned_data.get('fordelete', 'No')
-
-            if ident and ident != 0:
-                try:
-                    userform = UserTask.objects.get(pk=ident)
-                    if not user_can_access_task(request.user, userform):
-                        pass
-                    elif to_delete == "Yes":
-                        userform.to_show = 0
-                        userform.save()
-                    else:
-                        userform.name = form.cleaned_data['name']
-                        userform.timer = form.cleaned_data['timer']
-                        userform.status = form.cleaned_data.get('status', 'TODO')
-                        userform.due_date = form.cleaned_data.get('due_date')
-                        userform.priority = form.cleaned_data.get('priority', 2)
-                        userform.comment = form.cleaned_data.get('comment', '')
-                        userform.parent_task = form.cleaned_data.get('parent_task')
-                        if scope.team_id:
-                            userform.assignee = form.cleaned_data.get('assignee')
-                        userform.save()
-                except UserTask.DoesNotExist:
-                    pass
-            else:
-                task_name = form.cleaned_data.get('name', '').strip()
-                if task_name:
-                    parent_task = form.cleaned_data.get('parent_task')
-                    if parent_task:
-                        try:
-                            parent_task = UserTask.objects.get(pk=parent_task.pk)
-                            if scope.team_id:
-                                if parent_task.team_id != scope.team_id:
-                                    form.add_error(
-                                        'parent_task',
-                                        'Родительская задача должна относиться к этой команде.',
-                                    )
-                                    parent_task = None
-                            elif parent_task.user != request.user or parent_task.team_id:
-                                form.add_error(
-                                    'parent_task',
-                                    'Родительская задача должна принадлежать тому же пользователю.',
-                                )
-                                parent_task = None
-                        except UserTask.DoesNotExist:
-                            form.add_error('parent_task', 'Родительская задача не найдена.')
-                            parent_task = None
-
-                if not form.errors:
-                    new_status = form.cleaned_data.get('status', 'TODO')
-                    userform = UserTask(
-                        name=form.cleaned_data['name'],
-                        user=request.user,
-                        team_id=scope.team_id,
-                        assignee=form.cleaned_data.get('assignee') if scope.team_id else None,
-                        timer=form.cleaned_data.get('timer', 0),
-                        status=new_status,
-                        due_date=form.cleaned_data.get('due_date'),
-                        priority=form.cleaned_data.get('priority', 2),
-                        comment=form.cleaned_data.get('comment', ''),
-                        parent_task=parent_task,
-                        kanban_position=next_kanban_position_for_scope(scope, new_status),
-                    )
-                    userform.save()
-        else:
-            print('Form errors:', form.errors)
-            print('POST data:', request.POST)
-            print('Form data:', form.data)
 
     parent_tasks, orphans, completed_for_done = gather_kanban_board_inputs_for_scope(scope)
 
@@ -394,69 +605,15 @@ def user_tasks_view(request):
                     pass
 
     all_tasks_flat = flat_tasks_for_timer_and_counter(scope).exclude(status="COMPLETED")
-    
-    def add_today_time_and_helpers(task):
-        """Add today's time and helper properties for template, including subtask aggregation"""
-        # Calculate this task's own time (not including subtasks yet)
-        today_parts = PartTask.objects.filter(usertask_id=task.id, user_id=current_user_id, date_start=today)
-        task.today_seconds = sum([p.time_length for p in today_parts])
-        task.total_timer = task.timer  # Start with task's own timer
-        
-        # Add running time if task is currently counting
-        if task.is_counting and task.partnumber:
-            try:
-                # Use partnumber to get the specific running PartTask
-                running_part = PartTask.objects.get(pk=task.partnumber)
-                # Verify it's still running (datetime_stop is default value or null)
-                if running_part.datetime_stop.year == 1 or running_part.datetime_stop.year < 2000:
-                    running_time = (datetime.datetime.now() - running_part.datetime_start).total_seconds()
-                    task.today_seconds += int(running_time)
-                    # Add running time to total timer for display
-                    task.total_timer += int(running_time)
-            except (PartTask.DoesNotExist, AttributeError):
-                pass
-        
-        # Process subtasks recursively (bottom-up approach)
-        subtask_total_time = 0
-        subtask_today_time = 0
-        if hasattr(task, 'subtasks_list') and task.subtasks_list:
-            for subtask in task.subtasks_list:
-                add_today_time_and_helpers(subtask)
-                # Accumulate subtask times into parent
-                subtask_total_time += getattr(subtask, 'total_timer', subtask.timer)
-                subtask_today_time += getattr(subtask, 'today_seconds', 0)
-        
-        # Add subtask times to parent task's totals
-        task.total_timer += subtask_total_time
-        task.today_seconds += subtask_today_time
-        
-        # Add due date helper properties
-        if task.due_date:
-            days_diff = (task.due_date - today).days
-            if days_diff < 0:
-                task.due_date_class = 'due-date-overdue'
-                task.due_date_text = f"{task.due_date.strftime('%d.%m.%Y')} ({abs(days_diff)} дн. назад)"
-            elif days_diff == 0:
-                task.due_date_class = 'due-date-today'
-                task.due_date_text = "Сегодня"
-            elif days_diff <= 3:
-                task.due_date_class = 'due-date-soon'
-                task.due_date_text = f"осталось {days_diff} дн."
-            else:
-                task.due_date_class = 'due-date-normal'
-                task.due_date_text = task.due_date.strftime('%d.%m.%Y')
-        else:
-            task.due_date_class = 'due-date-none'
-            task.due_date_text = None
-    
+
     for task in parent_tasks:
-        add_today_time_and_helpers(task)
+        _enrich_task_timer_and_due_helpers(task, current_user_id, today)
 
     for task in orphans:
-        add_today_time_and_helpers(task)
+        _enrich_task_timer_and_due_helpers(task, current_user_id, today)
 
     for task in completed_for_done:
-        add_today_time_and_helpers(task)
+        _enrich_task_timer_and_due_helpers(task, current_user_id, today)
 
     kanban_columns = build_kanban_columns_for_scope(
         scope,
@@ -484,7 +641,7 @@ def user_tasks_view(request):
     ]
 
     for task in completed_tasks_last_week:
-        add_today_time_and_helpers(task)
+        _enrich_task_timer_and_due_helpers(task, current_user_id, today)
 
     user_teams = list(
         TaskTeam.objects.filter(
@@ -862,10 +1019,39 @@ def reports(request):
 
 @login_required
 def task_detail_view(request, task_id: int):
-    task = get_object_or_404(UserTask, pk=task_id)
+    task = get_object_or_404(
+        UserTask.objects.select_related("user", "team", "assignee", "parent_task"),
+        pk=task_id,
+    )
     if not user_can_access_task(request.user, task):
         raise Http404()
-    return render(request, "basic_app/task_detail.html", {"task": task})
+
+    if request.method == "POST" and "start_button" in request.POST:
+        _handle_timer_start(
+            request, request.user, request.user.id, expected_task_id=task_id
+        )
+        return _task_detail_redirect(request, task)
+
+    if request.method == "POST" and "stop_button" in request.POST:
+        _handle_timer_stop(request, request.user, expected_task_id=task_id)
+        return _task_detail_redirect(request, task)
+
+    if request.method == "POST":
+        success, bound_form = _apply_user_task_form_post(
+            request,
+            user=request.user,
+            team_id=task.team_id,
+            fixed_task_id=task_id,
+        )
+        if success:
+            return _task_detail_redirect(request, task)
+        context = _task_detail_build_context(
+            request, task, task_form_override=bound_form
+        )
+        return render(request, "basic_app/task_detail.html", context)
+
+    context = _task_detail_build_context(request, task)
+    return render(request, "basic_app/task_detail.html", context)
 
 
 def base(request):

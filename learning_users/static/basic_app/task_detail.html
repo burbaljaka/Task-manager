@@ -1,24 +1,164 @@
 {% extends "basic_app/base.html" %}
 
 {% block body_block %}
-<div class="mb-4">
-  <p class="mb-3">
-    <a href="{% url 'basic_app:user_tasks_view' %}" class="text-decoration-none">← К доске</a>
-  </p>
-  <h1 class="h3 mb-3"><span class="text-muted">#{{ task.id }}</span> {{ task.name }}</h1>
-  <dl class="row mb-0">
-    <dt class="col-sm-3">Статус</dt>
-    <dd class="col-sm-9">{{ task.get_status_label }}</dd>
-    <dt class="col-sm-3">Приоритет</dt>
-    <dd class="col-sm-9">{{ task.get_priority_display_name }}</dd>
-    {% if task.due_date %}
-    <dt class="col-sm-3">Срок</dt>
-    <dd class="col-sm-9">{{ task.due_date|date:"Y-m-d" }}</dd>
-    {% endif %}
-    {% if task.comment %}
-    <dt class="col-sm-3">Комментарий</dt>
-    <dd class="col-sm-9">{{ task.comment }}</dd>
-    {% endif %}
-  </dl>
+<div class="mb-3">
+  {% if task.team_id %}
+  <a href="{% url 'basic_app:user_tasks_view' %}?team={{ task.team_id }}" class="text-decoration-none">← К доске</a>
+  {% else %}
+  <a href="{% url 'basic_app:user_tasks_view' %}" class="text-decoration-none">← К доске</a>
+  {% endif %}
 </div>
+
+<div class="row g-4" data-task-detail-id="{{ task.id }}" data-is-counting="{{ task.is_counting }}" data-total-seconds="{{ task.total_timer|default:task.timer }}" data-today-seconds="{{ task.today_seconds|default:0 }}">
+  <div class="col-12 col-md-8">
+    <h1 class="h4 mb-3"><span class="text-muted">#{{ task.id }}</span> {{ task.name }}</h1>
+
+    <form id="task-detail-form" method="post" action="{% url 'basic_app:task_detail' task.id %}{% if team_query %}?team={{ team_query }}{% endif %}" name="task-detail-form" autocomplete="off">
+      {% csrf_token %}
+      {% if team_query %}<input type="hidden" name="team" value="{{ team_query }}">{% endif %}
+      <input type="hidden" name="id" value="{{ task.id }}">
+      <input type="hidden" name="timer" value="{{ task.timer }}">
+      <input type="hidden" name="partnumber" value="{{ task.partnumber }}">
+      <input type="hidden" name="is_counting" value="{{ task.is_counting }}">
+      <input type="hidden" name="fordelete" value="No">
+
+      <div class="mb-3">
+        <label class="form-label" for="id_name">Тема</label>
+        <input type="text" name="name" id="id_name" value="{{ task.name }}" maxlength="30" class="form-control" required>
+      </div>
+
+      <div class="mb-3">
+        <label class="form-label" for="id_status">Статус</label>
+        <select name="status" id="id_status" class="form-select">
+          {% for opt in status_options %}
+          <option value="{{ opt.key }}"{% if task.status == opt.key %} selected{% endif %}>{{ opt.label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="mb-3">
+        <label class="form-label" for="id_priority">Приоритет</label>
+        <select name="priority" id="id_priority" class="form-select">
+          {% for val, label in priority_choices %}
+          <option value="{{ val }}"{% if task.priority == val %} selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="mb-3">
+        <label class="form-label" for="id_due_date">Срок</label>
+        <input type="date" name="due_date" id="id_due_date" class="form-control" value="{% if task.due_date %}{{ task.due_date|date:'Y-m-d' }}{% endif %}">
+      </div>
+
+      {% if is_team_board %}
+      <div class="mb-3">
+        <label class="form-label" for="id_assignee">Исполнитель</label>
+        <select name="assignee" id="id_assignee" class="form-select">
+          <option value="">Без исполнителя</option>
+          {% for m in team_member_options %}
+          <option value="{{ m.id }}"{% if task.assignee_id == m.id %} selected{% endif %}>{{ m.username }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      {% endif %}
+
+      <div class="mb-3">
+        <label class="form-label" for="id_parent_task">Родительская задача</label>
+        {{ task_form.parent_task }}
+      </div>
+
+      <div class="mb-3">
+        <label class="form-label" for="id_comment">Комментарий</label>
+        <textarea name="comment" id="id_comment" class="form-control" rows="5">{{ task.comment|default:'' }}</textarea>
+      </div>
+
+      <button type="submit" class="btn btn-primary">Сохранить</button>
+    </form>
+
+    {% if subtasks %}
+    <div class="mt-4">
+      <h2 class="h6 text-muted">Подзадачи</h2>
+      <ul class="list-unstyled mb-0">
+        {% for st in subtasks %}
+        <li class="mb-1">
+          <a href="{% url 'basic_app:task_detail' st.id %}{% if team_query %}?team={{ team_query }}{% endif %}">#{{ st.id }} {{ st.name }}</a>
+          <span class="text-muted small">— {{ st.get_status_label }}</span>
+        </li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+
+    <div class="mt-4 pt-3 border-top">
+      <h2 class="h6 text-danger">Опасная зона</h2>
+      <button type="button" class="btn btn-outline-danger btn-sm" onclick="taskDetailDelete()">Удалить задачу</button>
+    </div>
+  </div>
+
+  <div class="col-12 col-md-4">
+    <div class="card border-0 bg-light">
+      <div class="card-body">
+        <h2 class="h6 card-title">Время</h2>
+        <p class="mb-1 small text-muted">Накоплено (с подзадачами)</p>
+        <p class="font-monospace mb-3 fs-5 mb-1" id="detail-total-display">00:00:00</p>
+        <p class="mb-1 small text-muted">Сегодня</p>
+        <p class="font-monospace mb-3" id="detail-today-display">00:00:00</p>
+        <p class="small text-muted mb-2">Запуск и остановку отсчёта выполняйте здесь; на карточке канбана таймер недоступен.</p>
+
+        <form method="post" action="{% url 'basic_app:task_detail' task.id %}{% if team_query %}?team={{ team_query }}{% endif %}" class="d-inline">
+          {% csrf_token %}
+          {% if team_query %}<input type="hidden" name="team" value="{{ team_query }}">{% endif %}
+          <input type="hidden" name="name" value="{{ task.name }}">
+          <input type="hidden" name="id" value="{{ task.id }}">
+          <input type="hidden" name="timer" value="{{ task.timer }}">
+          <button type="submit" name="start_button" class="btn btn-outline-primary btn-sm"{% if task.is_counting %} style="display:none"{% endif %}>▶ Старт</button>
+        </form>
+        <form method="post" action="{% url 'basic_app:task_detail' task.id %}{% if team_query %}?team={{ team_query }}{% endif %}" class="d-inline">
+          {% csrf_token %}
+          {% if team_query %}<input type="hidden" name="team" value="{{ team_query }}">{% endif %}
+          <input type="hidden" name="partnumber" value="{{ task.partnumber }}">
+          <input type="hidden" name="timer" value="{{ task.timer }}">
+          <button type="submit" name="stop_button" class="btn btn-danger btn-sm"{% if not task.is_counting %} style="display:none"{% endif %}>■ Стоп</button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script type="text/javascript">
+function pad(val) { return val > 9 ? val : "0" + val; }
+function formatHMS(sec) {
+  sec = Math.floor(sec);
+  return pad(Math.floor(sec / 3600)) + ":" + pad(Math.floor((sec % 3600) / 60)) + ":" + pad(sec % 60);
+}
+function taskDetailDelete() {
+  if (!confirm("Удалить задачу?")) return;
+  var f = document.getElementById("task-detail-form");
+  if (!f) return;
+  var del = f.querySelector('[name="fordelete"]');
+  if (del) del.value = "Yes";
+  f.submit();
+}
+document.addEventListener("DOMContentLoaded", function() {
+  var root = document.querySelector("[data-task-detail-id]");
+  if (!root) return;
+  var totalSec = parseInt(root.getAttribute("data-total-seconds") || "0", 10);
+  var isCounting = root.getAttribute("data-is-counting") === "1";
+  var todaySec = parseInt(root.getAttribute("data-today-seconds") || "0", 10) || 0;
+  var totalEl = document.getElementById("detail-total-display");
+  var todayEl = document.getElementById("detail-today-display");
+  if (todayEl) todayEl.textContent = formatHMS(todaySec);
+  if (!totalEl) return;
+  var sec = totalSec;
+  totalEl.textContent = formatHMS(sec);
+  if (isCounting) {
+    setInterval(function() {
+      sec += 1;
+      totalEl.textContent = formatHMS(sec);
+      todaySec += 1;
+      if (todayEl) todayEl.textContent = formatHMS(todaySec);
+    }, 1000);
+  }
+});
+</script>
 {% endblock %}
