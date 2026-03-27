@@ -623,6 +623,9 @@ class LoginViewTests(TestCase):
         self.client = Client()
         User.objects.create_user(username="loguser", password="correctpass")
 
+    def test_logout_named_url_is_standard_path(self):
+        self.assertEqual(reverse("logout"), "/logout/")
+
     def test_failed_login_does_not_log_password(self):
         url = reverse("basic_app:user_login")
         secret = "wrong_secret_abc"
